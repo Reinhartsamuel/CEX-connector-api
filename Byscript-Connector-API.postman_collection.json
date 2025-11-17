@@ -1,0 +1,301 @@
+{
+  "info": {
+    "name": "Byscript Connector API",
+    "description": "API connector for cryptocurrency trading across multiple exchanges. Currently supports Gate.io futures trading with plans to expand to OKX, Binance, and other exchanges.",
+    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
+  },
+  "variable": [
+    {
+      "key": "baseUrl",
+      "value": "http://localhost:3000",
+      "type": "string"
+    },
+    {
+      "key": "apiKey",
+      "value": "your_gate_io_api_key_here",
+      "type": "string"
+    },
+    {
+      "key": "apiSecret",
+      "value": "your_gate_io_api_secret_here",
+      "type": "string"
+    }
+  ],
+  "item": [
+    {
+      "name": "Gate.io Futures Trading",
+      "description": "Gate.io futures trading endpoints",
+      "item": [
+        {
+          "name": "Place Futures Order",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "api-key",
+                "value": "{{apiKey}}"
+              },
+              {
+                "key": "api-secret",
+                "value": "{{apiSecret}}"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"market_type\": \"market\",\n  \"price\": 50000.0,\n  \"contract\": \"BTC_USDT\",\n  \"leverage\": 10,\n  \"leverage_type\": \"ISOLATED\",\n  \"size\": 1000,\n  \"position_type\": \"long\",\n  \"take_profit\": {\n    \"enabled\": true,\n    \"price\": \"52000\",\n    \"price_type\": \"mark\"\n  },\n  \"stop_loss\": {\n    \"enabled\": true,\n    \"price\": \"48000\",\n    \"price_type\": \"mark\"\n  }\n}"
+            },
+            "url": {
+              "raw": "{{baseUrl}}/gate/place-futures-order",
+              "host": ["{{baseUrl}}"],
+              "path": ["gate", "place-futures-order"]
+            },
+            "description": "Place a new futures order with optional take profit and stop loss. For market orders, set price to 0 and market_type to 'market'. For limit orders, set price to desired entry price and market_type to 'limit'."
+          },
+          "response": []
+        },
+        {
+          "name": "Close Futures Position",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "api-key",
+                "value": "{{apiKey}}"
+              },
+              {
+                "key": "api-secret",
+                "value": "{{apiSecret}}"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"contract\": \"BTC_USDT\",\n  \"auto_size\": \"close_long\"\n}"
+            },
+            "url": {
+              "raw": "{{baseUrl}}/gate/close-futures-order",
+              "host": ["{{baseUrl}}"],
+              "path": ["gate", "close-futures-order"]
+            },
+            "description": "Close an existing futures position. Use 'close_long' to close long positions and 'close_short' to close short positions."
+          },
+          "response": []
+        },
+        {
+          "name": "Cancel Futures Order",
+          "request": {
+            "method": "DELETE",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "api-key",
+                "value": "{{apiKey}}"
+              },
+              {
+                "key": "api-secret",
+                "value": "{{apiSecret}}"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/gate/cancel-futures-order?trade_id=123456789&tp_id=987654321&sl_id=555555555",
+              "host": ["{{baseUrl}}"],
+              "path": ["gate", "cancel-futures-order"],
+              "query": [
+                {
+                  "key": "trade_id",
+                  "value": "123456789",
+                  "description": "The main order ID to cancel"
+                },
+                {
+                  "key": "tp_id",
+                  "value": "987654321",
+                  "description": "Take profit order ID to cancel (optional)"
+                },
+                {
+                  "key": "sl_id",
+                  "value": "555555555",
+                  "description": "Stop loss order ID to cancel (optional)"
+                }
+              ]
+            },
+            "description": "Cancel an open futures order and associated TP/SL orders. Replace the query parameters with actual order IDs from your trades."
+          },
+          "response": []
+        },
+        {
+          "name": "Get Order Details",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "api-key",
+                "value": "{{apiKey}}"
+              },
+              {
+                "key": "api-secret",
+                "value": "{{apiSecret}}"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/gate/get-futures-order?trade_id=123456789",
+              "host": ["{{baseUrl}}"],
+              "path": ["gate", "get-futures-order"],
+              "query": [
+                {
+                  "key": "trade_id",
+                  "value": "123456789",
+                  "description": "The order ID to retrieve details for"
+                }
+              ]
+            },
+            "description": "Retrieve details of a specific futures order. Replace the trade_id parameter with an actual order ID."
+          },
+          "response": []
+        }
+      ]
+    },
+    {
+      "name": "Examples - Market Orders",
+      "description": "Example requests for different market scenarios",
+      "item": [
+        {
+          "name": "Market Long with TP/SL",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "api-key",
+                "value": "{{apiKey}}"
+              },
+              {
+                "key": "api-secret",
+                "value": "{{apiSecret}}"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"market_type\": \"market\",\n  \"price\": 0,\n  \"contract\": \"ETH_USDT\",\n  \"leverage\": 5,\n  \"leverage_type\": \"ISOLATED\",\n  \"size\": 500,\n  \"position_type\": \"long\",\n  \"take_profit\": {\n    \"enabled\": true,\n    \"price\": \"3500\",\n    \"price_type\": \"last\"\n  },\n  \"stop_loss\": {\n    \"enabled\": true,\n    \"price\": \"2800\",\n    \"price_type\": \"last\"\n  }\n}"
+            },
+            "url": {
+              "raw": "{{baseUrl}}/gate/place-futures-order",
+              "host": ["{{baseUrl}}"],
+              "path": ["gate", "place-futures-order"]
+            },
+            "description": "Example: Market buy for ETH with 5x leverage, take profit at 3500, stop loss at 2800"
+          },
+          "response": []
+        },
+        {
+          "name": "Limit Short with TP/SL",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "api-key",
+                "value": "{{apiKey}}"
+              },
+              {
+                "key": "api-secret",
+                "value": "{{apiSecret}}"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"market_type\": \"limit\",\n  \"price\": 52000.0,\n  \"contract\": \"BTC_USDT\",\n  \"leverage\": 3,\n  \"leverage_type\": \"CROSS\",\n  \"size\": 2000,\n  \"position_type\": \"short\",\n  \"take_profit\": {\n    \"enabled\": true,\n    \"price\": \"48000\",\n    \"price_type\": \"mark\"\n  },\n  \"stop_loss\": {\n    \"enabled\": true,\n    \"price\": \"55000\",\n    \"price_type\": \"mark\"\n  }\n}"
+            },
+            "url": {
+              "raw": "{{baseUrl}}/gate/place-futures-order",
+              "host": ["{{baseUrl}}"],
+              "path": ["gate", "place-futures-order"]
+            },
+            "description": "Example: Limit short for BTC at 52000 with 3x cross margin, take profit at 48000, stop loss at 55000"
+          },
+          "response": []
+        },
+        {
+          "name": "Close Short Position",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "api-key",
+                "value": "{{apiKey}}"
+              },
+              {
+                "key": "api-secret",
+                "value": "{{apiSecret}}"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"contract\": \"ETH_USDT\",\n  \"auto_size\": \"close_short\"\n}"
+            },
+            "url": {
+              "raw": "{{baseUrl}}/gate/close-futures-order",
+              "host": ["{{baseUrl}}"],
+              "path": ["gate", "close-futures-order"]
+            },
+            "description": "Example: Close a short position for ETH"
+          },
+          "response": []
+        }
+      ]
+    }
+  ],
+  "event": [
+    {
+      "listen": "prerequest",
+      "script": {
+        "type": "text/javascript",
+        "exec": [
+          "// Pre-request script for Byscript Connector API",
+          "console.log('Testing Byscript Connector API');"
+        ]
+      }
+    },
+    {
+      "listen": "test",
+      "script": {
+        "type": "text/javascript",
+        "exec": [
+          "// Test script for Byscript Connector API",
+          "pm.test(\"Status code is 200\", function () {",
+          "    pm.response.to.have.status(200);",
+          "});",
+          "",
+          "pm.test(\"Response has success message\", function () {",
+          "    var jsonData = pm.response.json();",
+          "    pm.expect(jsonData.message).to.eql(\"ok\");",
+          "});"
+        ]
+      }
+    }
+  ],
+  "auth": null
+}
