@@ -21,8 +21,12 @@ app.get('/', (c) => {
 
 app.route('/gate', gateRouter)
 
-export default {
-  port: process.env['PORT'] || 1122,
+const port = parseInt(process.env['PORT'] || '1122')
+
+console.log(`Server starting on port ${port}`)
+
+Bun.serve({
+  port,
   fetch: app.fetch,
   // maxRequestBodySize: 1024 * 1024 * 200, // your value here
-}
+})
