@@ -21,7 +21,6 @@ app.get('/', (c) => {
 
 app.route('/gate', gateRouter)
 
-
 export default {
   port: process.env['PORT'] || 1122,
   fetch: app.fetch,
