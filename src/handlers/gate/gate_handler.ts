@@ -17,26 +17,21 @@ export const GateHandler = {
         typeof placeFuturesOrdersSchema
       >;
       // GateServices.initialize(process.env.GATE_API_KEY!, process.env.GATE_SECRET_KEY!);
-      const api_key = c.req.header('api-key')!;
-      const api_secret = c.req.header('api-secret')!;
-      GateServices.initialize(
-        api_key,
-        api_secret
-      );
+      const api_key = c.req.header("api-key")!;
+      const api_secret = c.req.header("api-secret")!;
+      GateServices.initialize(api_key, api_secret);
       let allReturn: { message: string; data: any } = {
         message: "ok",
         data: null,
       };
 
-      if (body.leverage != 1) {
-        console.log("updating leverage");
-        // update leverage
-        const resLeverage = await GateServices.updateLeverage(
-          body.contract,
-          body.leverage,
-        );
-        console.log(resLeverage, "resLeverage");
-      }
+      console.log("updating leverage");
+      // update leverage
+      const resLeverage = await GateServices.updateLeverage(
+        body.contract,
+        body.leverage,
+      );
+      console.log(resLeverage, "resLeverage");
 
       // update margin mode
       const resMarginMode = await GateServices.updateMarginMode(
@@ -63,7 +58,7 @@ export const GateHandler = {
         price: priceStr,
         tif: tif,
         iceberg: 0,
-        reduce_only: false,
+        reduce_only: body.reduce_only || false,
         auto_size: "",
         settle: "usdt",
         take_profit: body.take_profit.price,
@@ -156,7 +151,7 @@ export const GateHandler = {
         };
         console.log(payload, "PAYLOAD TP");
         const resTP = await GateServices.triggerPriceOrder(payload);
-        allReturn.data.take_profit = resTP
+        allReturn.data.take_profit = resTP;
       }
 
       if (body.stop_loss.enabled) {
@@ -202,13 +197,12 @@ export const GateHandler = {
   closePosition: async function (c: Context) {
     try {
       // GateServices.initialize(process.env.GATE_API_KEY!, process.env.GATE_SECRET_KEY!);
-      const body = await c.req.json() as z.infer<typeof closeFuturesPositionSchema>;
-      const api_key = c.req.header('api-key')!;
-      const api_secret = c.req.header('api-secret')!;
-      GateServices.initialize(
-        api_key,
-        api_secret
-      );
+      const body = (await c.req.json()) as z.infer<
+        typeof closeFuturesPositionSchema
+      >;
+      const api_key = c.req.header("api-key")!;
+      const api_secret = c.req.header("api-secret")!;
+      GateServices.initialize(api_key, api_secret);
       const res = await GateServices.closeFuturesOrder(body);
       return c.json(res);
     } catch (e) {
@@ -235,19 +229,16 @@ export const GateHandler = {
   cancelPosition: async function (c: Context) {
     try {
       // GateServices.initialize(process.env.GATE_API_KEY!, process.env.GATE_SECRET_KEY!);
-      const api_key = c.req.header('api-key')!;
-      const api_secret = c.req.header('api-secret')!;
-      GateServices.initialize(
-        api_key,
-        api_secret
-      );
-      const tradeId = c.req.query('trade_id')! as string;
-      const tpId = c.req.query('tp_id') as string;
-      const slId = c.req.query('sl_id') as string;
+      const api_key = c.req.header("api-key")!;
+      const api_secret = c.req.header("api-secret")!;
+      GateServices.initialize(api_key, api_secret);
+      const tradeId = c.req.query("trade_id")! as string;
+      const tpId = c.req.query("tp_id") as string;
+      const slId = c.req.query("sl_id") as string;
       const res1 = await GateServices.cancelFuturesOrder(tradeId);
       const res2 = await GateServices.cancelPriceTrigger(tpId);
       const res3 = await GateServices.cancelPriceTrigger(slId);
-      return c.json({res1, res2, res3});
+      return c.json({ res1, res2, res3 });
     } catch (e) {
       console.error(e, "ERROR 500 CANCEL POSITION");
       if (e instanceof Error) {
@@ -271,13 +262,10 @@ export const GateHandler = {
   getOrderDetails: async function (c: Context) {
     try {
       // GateServices.initialize(process.env.GATE_API_KEY!, process.env.GATE_SECRET_KEY!);
-      const api_key = c.req.header('api-key')!;
-      const api_secret = c.req.header('api-secret')!;
-      GateServices.initialize(
-        api_key,
-        api_secret
-      );
-      const tradeId = c.req.query('trade_id')! as string;
+      const api_key = c.req.header("api-key")!;
+      const api_secret = c.req.header("api-secret")!;
+      GateServices.initialize(api_key, api_secret);
+      const tradeId = c.req.query("trade_id")! as string;
       const res = await GateServices.getFuturesOrder(tradeId);
       return c.json(res);
     } catch (e) {

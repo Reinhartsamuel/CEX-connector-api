@@ -15,7 +15,7 @@ export const placeFuturesOrdersSchema = z.object({
   position_type: z.enum(["long","short"]),
   take_profit: takeOrStop,
   stop_loss: takeOrStop,
-
+  reduce_only:z.boolean()
 });
 
 export const closeFuturesPositionSchema = z.object({
