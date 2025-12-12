@@ -22,24 +22,24 @@ gateRouter.post(
   GateHandler.closePositionDb,
 );
 
-gateRouter.post(
-  "/close-futures-order",
-  GateHandler.closePosition,
-);
+// gateRouter.post(
+//   "/close-futures-order",
+//   GateHandler.closePosition,
+// );
 
-gateRouter.delete(
-  "/cancel-futures-order",
-  GateHandler.cancelPosition,
-);
+// gateRouter.delete(
+//   "/cancel-futures-order",
+//   GateHandler.cancelPosition,
+// );
 
-gateRouter.get(
-  "/get-futures-order",
-  GateHandler.getOrderDetails,
-);
-gateRouter.get(
-  "/account-info",
-  GateHandler.getAccountDetails
-);
+// gateRouter.get(
+//   "/get-futures-order",
+//   GateHandler.getOrderDetails,
+// );
+// gateRouter.get(
+//   "/account-info",
+//   GateHandler.getAccountDetails
+// );
 gateRouter.post(
   "/whitelist-request",
   GateHandler.playground
