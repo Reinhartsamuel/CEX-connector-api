@@ -2,6 +2,16 @@
 
 A comprehensive API connector for cryptocurrency trading across multiple exchanges. Currently supports Gate.io with plans to expand to OKX, Binance, and other major exchanges.
 
+## 🏗️ New Architecture (v2.0)
+
+The API now features a Redis-controlled WebSocket architecture for real-time order tracking:
+
+- **Separate Processes**: Hono API and WebSocket workers run independently via PM2
+- **Redis Control Channel**: Workers open connections on-demand based on control messages
+- **BigInt Preservation**: Uses json-bigint to preserve large order IDs
+- **Real-time SSE**: Server-Sent Events for frontend order updates
+- **Scalable**: Multiple worker instances can be scaled horizontally
+
 ## 🚀 Features
 
 - **Multi-Exchange Support**: Currently supports Gate.io futures trading
@@ -11,10 +21,15 @@ A comprehensive API connector for cryptocurrency trading across multiple exchang
 - **RESTful API**: Clean, well-documented endpoints
 - **TypeScript**: Full type safety with Zod validation
 - **Security**: HMAC signature authentication for exchange APIs
+- **Real-time WebSocket**: Redis-controlled WebSocket workers for order tracking
+- **Server-Sent Events**: Real-time order updates via SSE
+- **Scalable Architecture**: PM2-based process management with horizontal scaling
 
 ## 📋 Prerequisites
 
 - [Bun](https://bun.sh/) (v1.0.0 or higher)
+- [Redis](https://redis.io/) server (for WebSocket control and real-time data)
+- [PM2](https://pm2.keymetrics.io/) (for production process management)
 - Gate.io API credentials (API Key and Secret)
 
 ## 🛠 Installation
@@ -30,12 +45,26 @@ cd byscript-connector-api
 bun install
 ```
 
-3. Start the development server:
+3. Start Redis server:
 ```bash
-bun run dev
+docker run -p 6379:6379 redis
 ```
 
-The API will be available at `http://localhost:3000`
+4. Development mode (run in separate terminals):
+```bash
+# Terminal 1: Hono API
+bun run src/index.ts
+
+# Terminal 2: WebSocket Worker
+bun run src/workers/gateWorkerRunner.ts
+```
+
+5. Production mode with PM2:
+```bash
+pm2 start ecosystem.config.js
+```
+
+The API will be available at `http://localhost:1122`
 
 ## 📚 API Endpoints
 
@@ -44,7 +73,10 @@ The API will be available at `http://localhost:3000`
 #### Place Futures Order
 **POST** `/gate/place-futures-order`
 
-Place a new futures order with optional take profit and stop loss.
+Place a new futures order with optional take profit and stop loss. This endpoint automatically:
+- Stores user credentials in Redis
+- Publishes WebSocket control message
+- Triggers real-time order tracking
 
 **Headers:**
 - `api-key`: Your Gate.io API key (required)
@@ -53,6 +85,7 @@ Place a new futures order with optional take profit and stop loss.
 **Request Body:**
 ```json
 {
+  "userId": "unique_user_id_123",
   "market_type": "market|limit",
   "price": 50000.0,
   "contract": "BTC_USDT",
@@ -128,6 +161,25 @@ Retrieve details of a specific futures order.
 **Query Parameters:**
 - `trade_id`: The order ID to retrieve
 
+### Real-time Order Updates
+
+#### Server-Sent Events (SSE)
+**GET** `/sse/sse/orders/:userId`
+
+Subscribe to real-time order updates for a specific user.
+
+**Example:**
+```bash
+curl -N http://localhost:1122/sse/sse/orders/test_user_123
+```
+
+**Response Format:**
+```
+data: {"id": "1234567890123456789", "status": "open", ...}
+
+data: {"id": "1234567890123456789", "status": "filled", ...}
+```
+
 ## 🔧 Configuration
 
 ### Authentication
@@ -139,6 +191,13 @@ The API requires Gate.io credentials to be provided in request headers for all e
 
 These headers are required for authentication and will be used to sign requests to the Gate.io API.
 
+### Environment Variables
+
+- `REDIS_URL`: Redis connection string (default: `redis://127.0.0.1:6379`)
+- `PORT`: Hono API port (default: `1122`)
+- `GATE_API_KEY`: Gate.io API key (for testing)
+- `GATE_API_SECRET`: Gate.io API secret (for testing)
+
 ### Request Validation
 
 All endpoints use Zod schemas for request validation. Invalid requests will return detailed error messages.
@@ -149,6 +208,7 @@ All endpoints use Zod schemas for request validation. Invalid requests will retu
 
 ```typescript
 {
+  userId: string,          // Unique user identifier for WebSocket tracking
   market_type: "market" | "limit",
   price: number,           // Entry price (0 for market orders)
   contract: string,        // Trading pair (e.g., "BTC_USDT")
@@ -185,7 +245,10 @@ When placing a futures order, the system automatically:
 1. **Sets Leverage**: Updates account leverage for the specified contract
 2. **Configures Margin Mode**: Sets isolated or cross margin as specified
 3. **Places Main Order**: Creates the entry order (market or limit)
-4. **Creates TP/SL Orders**: If enabled, sets up take profit and stop loss trigger orders
+4. **Stores Credentials**: Saves API credentials to Redis for WebSocket access
+5. **Triggers WebSocket**: Publishes control message to open WebSocket connection
+6. **Creates TP/SL Orders**: If enabled, sets up take profit and stop loss trigger orders
+7. **Real-time Tracking**: WebSocket worker subscribes to order updates and stores them in Redis
 
 ### Market vs Limit Orders
 
@@ -204,6 +267,8 @@ The API provides comprehensive error handling:
 - **Validation Errors**: Detailed Zod validation messages
 - **API Errors**: Gate.io API error responses with status codes
 - **Authentication Errors**: Missing or invalid API credentials
+- **Redis Connection Errors**: WebSocket control channel failures
+- **WebSocket Errors**: Connection and subscription failures
 
 All errors return structured JSON responses with appropriate HTTP status codes.
 
@@ -218,8 +283,47 @@ src/
 ├── routes/            # API route definitions
 ├── schemas/           # Zod validation schemas
 ├── services/          # Exchange service integrations
-└── utils/             # Utility functions
+├── utils/             # Utility functions
+└── workers/           # WebSocket workers
+    ├── gateWorkerRunner.ts    # Redis-controlled worker
+    └── gateWorker.ts          # Legacy worker (archived)
 ```
+
+## 🚀 Production Deployment
+
+### PM2 Process Management
+
+The API uses PM2 for production process management:
+
+```bash
+# Start all services
+pm2 start ecosystem.config.js
+
+# Scale WebSocket workers
+pm2 scale gate-worker 4
+
+# Monitor services
+pm2 status
+pm2 logs
+
+# Restart services
+pm2 restart all
+```
+
+### Architecture Overview
+
+- **Hono API**: Handles HTTP requests, stores credentials, publishes control messages
+- **Gate Worker**: Subscribes to Redis control channel, manages per-user WebSocket connections
+- **Redis**: Central message bus for control messages and real-time data storage
+- **SSE**: Provides real-time order updates to frontend clients
+
+### WebSocket Control Flow
+
+1. **Order Placement** → Hono API stores credentials and publishes `{op: 'open', userId, contract}`
+2. **Control Message** → Redis pub/sub delivers message to all workers
+3. **WebSocket Connection** → Worker opens Gate.io WebSocket for the user
+4. **Order Updates** → Worker stores snapshots in Redis and publishes SSE events
+5. **Real-time Updates** → Frontend receives updates via SSE endpoint
 
 ## 🔐 Authentication & Security
 
@@ -248,7 +352,7 @@ All authenticated requests require:
 
 ```typescript
 // src/utils/signRequest.ts
-function signRequest(
+function signRequestRest(
   credentials: GateCredentials,
   options: SignRequestOptions
 ): Record<string, string>
@@ -267,6 +371,29 @@ export const validationErrorHandler = (result: any, c: Context)
 
 Transforms Zod validation errors into user-friendly format with detailed field-level error messages.
 
+### WebSocket Utilities
+
+```typescript
+// src/utils/websocket.ts
+function createGateWebSocket(
+  credentials: GateCredentials,
+  channel: string,
+  event: string,
+  payload?: any[]
+): Promise<WebSocket>
+
+function listenToWebSocket(
+  ws: WebSocket,
+  onMessage: (data: any) => void,
+  onError?: (error: Error) => void
+): void
+```
+
+**Features:**
+- Uses json-bigint to preserve large order IDs
+- Automatic reconnection with exponential backoff
+- Redis-based control channel for on-demand connections
+
 ## 🔮 Future Development
 
 Planned exchange integrations:
@@ -275,6 +402,12 @@ Planned exchange integrations:
 - 📋 Binance
 - 📋 Bybit
 - 📋 KuCoin
+
+Planned architecture improvements:
+- 🔄 Multiple exchange WebSocket workers
+- 📋 Connection pooling and load balancing
+- 📋 Advanced order state management
+- 📋 Historical data storage and analytics
 
 ## 🤝 Contributing
 
@@ -295,7 +428,7 @@ A ready-to-use Postman collection is available for easy API testing:
 ### Setup Instructions
 
 1. **Import Collection**:
-   - Download `Byscript-Connector-API.postman_collection.json` from the project root
+   - Download `connector-API.postman_collection.json` from the project root
    - Open Postman and click "Import"
    - Select the downloaded JSON file
 
@@ -303,14 +436,16 @@ A ready-to-use Postman collection is available for easy API testing:
    - In Postman, go to the "Environments" tab
    - Create a new environment called "Byscript API"
    - Add the following variables:
-     - `baseUrl`: `http://localhost:3000` (or your deployed URL)
+     - `baseUrl`: `http://localhost:1122` (or your deployed URL)
      - `apiKey`: Your Gate.io API key
      - `apiSecret`: Your Gate.io API secret
+     - `userId`: Unique user identifier for WebSocket testing
 
 3. **Test the API**:
    - Select the "Byscript Connector API" collection
    - Choose your environment from the dropdown
-   - Start with the "Place Futures Order" request
+   - Start with the "Place Futures Order" request (includes new `userId` field)
+   - Test the SSE endpoint for real-time updates
    - Modify request bodies as needed for your trading parameters
 
 ### Collection Features
@@ -319,6 +454,8 @@ A ready-to-use Postman collection is available for easy API testing:
 - **Example Requests**: Multiple trading scenarios with realistic parameters
 - **Test Scripts**: Automatic response validation
 - **Environment Variables**: Easy configuration management
+- **SSE Testing**: Real-time order update examples
+- **WebSocket Integration**: Updated requests with `userId` field
 
 ## 🆘 Support
 
@@ -328,6 +465,28 @@ For issues and questions:
 3. Ensure proper API credential configuration
 4. Verify contract symbols and trading parameters
 5. Use the Postman collection for testing
+6. Ensure Redis server is running for WebSocket functionality
+7. Check PM2 logs for production deployment issues
+8. Verify `userId` field is included in order placement requests
+
+---
+
+## 🐛 Troubleshooting
+
+### WebSocket Issues
+- **Worker not starting**: Check Redis connection and `REDIS_URL` environment variable
+- **No real-time updates**: Verify `userId` matches between order placement and SSE subscription
+- **Connection errors**: Check Gate.io API credentials and WebSocket endpoint
+
+### Redis Issues
+- **Connection refused**: Ensure Redis server is running on expected port
+- **Control messages not delivered**: Verify Redis pub/sub channel names match
+- **Credential storage failures**: Check Redis persistence and memory limits
+
+### Production Issues
+- **PM2 process crashes**: Check memory limits and restart policies
+- **Scalability problems**: Scale worker instances with `pm2 scale gate-worker N`
+- **Performance issues**: Monitor Redis memory usage and connection counts
 
 ---
 

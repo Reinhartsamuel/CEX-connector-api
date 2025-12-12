@@ -6,6 +6,8 @@ const takeOrStop = z.object({
   price_type: z.enum(['mark', 'index', 'last']),
 });
 export const placeFuturesOrdersSchema = z.object({
+  user_id: z.string(),
+  exchange_id: z.number(),
   market_type: z.enum(['market', 'limit']),
   price: z.float64(),
   contract: z.string(),
@@ -21,7 +23,7 @@ export const placeFuturesOrdersSchema = z.object({
 export const closeFuturesPositionSchema = z.object({
   contract: z.string(),
   auto_size: z.enum(["close_long","close_short"]),
-
+  exchange_id: z.number()
 });
 
 // Add more gate-related schemas here as needed

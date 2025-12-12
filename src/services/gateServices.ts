@@ -3,7 +3,7 @@ import {
   GateServiceConfig,
   GateTriggerPriceOrder,
 } from "../schemas/interfaces";
-import { signRequest } from "../utils/signRequest";
+import { signRequestRest } from "../utils/signRequest";
 import * as z from "zod";
 import { closeFuturesPositionSchema } from "../schemas/gateSchemas";
 import * as JSONbig from "json-bigint";
@@ -42,7 +42,7 @@ export const GateServices = {
     const payloadStr = JSON.stringify(payload);
 
     // Generate signed headers
-    const headers = signRequest(this.config.credentials, {
+    const headers = signRequestRest(this.config.credentials, {
       method,
       urlPath,
       queryString,
@@ -90,7 +90,7 @@ export const GateServices = {
     const queryString = `leverage=${leverage}`;
 
     // Generate signed headers
-    const headers = signRequest(this.config.credentials, {
+    const headers = signRequestRest(this.config.credentials, {
       method,
       urlPath,
       queryString,
@@ -137,7 +137,7 @@ export const GateServices = {
     const payload = "";
 
     // Generate signed headers
-    const headers = signRequest(this.config.credentials, {
+    const headers = signRequestRest(this.config.credentials, {
       method,
       urlPath,
       queryString,
@@ -179,7 +179,7 @@ export const GateServices = {
     const payloadStr = JSON.stringify(payload);
 
     // Generate signed headers
-    const headers = signRequest(this.config.credentials, {
+    const headers = signRequestRest(this.config.credentials, {
       method,
       urlPath,
       queryString: "",
@@ -223,7 +223,7 @@ export const GateServices = {
     const payloadStr = JSON.stringify(payload);
 
     // Generate signed headers
-    const headers = signRequest(this.config.credentials, {
+    const headers = signRequestRest(this.config.credentials, {
       method,
       urlPath,
       queryString: "",
@@ -285,7 +285,7 @@ export const GateServices = {
       throw new Error("No credentials found. Call initialize first!");
     }
     const urlPath = `/api/v4/futures/usdt/orders/${orderId}`;
-    const headers = signRequest(this.config.credentials, {
+    const headers = signRequestRest(this.config.credentials, {
       method: "DELETE",
       urlPath: urlPath,
       queryString: "",
@@ -305,7 +305,6 @@ export const GateServices = {
     return JSONbig.parse(responseText);
   },
 
-
   /**
    * Cancel price triggered order aka TP/SL
    * @param orderId - The order ID to cancel
@@ -315,7 +314,7 @@ export const GateServices = {
       throw new Error("No credentials found. Call initialize first!");
     }
     const urlPath = `/api/v4/futures/usdt/price_orders/${orderId}`;
-    const headers = signRequest(this.config.credentials, {
+    const headers = signRequestRest(this.config.credentials, {
       method: "DELETE",
       urlPath: urlPath,
       queryString: "",
@@ -328,7 +327,9 @@ export const GateServices = {
       },
     });
     if (!response.ok) {
-      throw new Error(`Failed to cancel order: ${response.statusText}`);
+      throw new Error(
+        `Failed to cancel price trigger order: ${response.statusText}`,
+      );
     }
 
     const responseText = await response.text();
@@ -344,7 +345,7 @@ export const GateServices = {
     }
 
     const urlPath = `/api/v4/futures/usdt/orders/${orderId}`;
-    const headers = signRequest(this.config.credentials, {
+    const headers = signRequestRest(this.config.credentials, {
       method: "GET",
       urlPath,
       queryString: "",
@@ -355,6 +356,101 @@ export const GateServices = {
         "Content-Type": "application/json",
         ...headers,
       },
+    });
+    if (!response.ok) {
+      const errorText = await response.text();
+      throw new Error(
+        `Gate.io API error on getFuturesOrder (${response.status}): ${errorText}`,
+      );
+    }
+
+    const responseText = await response.text();
+    return JSONbig.parse(responseText);
+  },
+  getAccountInfo: async function () {
+    if (!this.config.credentials) {
+      throw new Error("No credentials found. Call initialize first!");
+    }
+
+    const urlPath = `/api/v4/account/detail`;
+    const headers = signRequestRest(this.config.credentials, {
+      method: "GET",
+      urlPath,
+      queryString: "",
+    });
+    const response = await fetch(this.config.baseUrl + urlPath, {
+      method: "GET",
+      headers: {
+        "Content-Type": "application/json",
+        ...headers,
+      },
+    });
+    if (!response.ok) {
+      const errorText = await response.text();
+      throw new Error(
+        `Gate.io API error on getFuturesOrder (${response.status}): ${errorText}`,
+      );
+    }
+
+    const responseText = await response.text();
+    return JSONbig.parse(responseText);
+  },
+  getMainKeysInfo: async function () {
+    if (!this.config.credentials) {
+      throw new Error("No credentials found. Call initialize first!");
+    }
+
+    const urlPath = `/api/v4/account/main_keys`;
+    const headers = signRequestRest(this.config.credentials, {
+      method: "GET",
+      urlPath,
+      queryString: "",
+    });
+    const response = await fetch(this.config.baseUrl + urlPath, {
+      method: "GET",
+      headers: {
+        "Content-Type": "application/json",
+        ...headers,
+      },
+    });
+    if (!response.ok) {
+      const errorText = await response.text();
+      throw new Error(
+        `Gate.io API error on getFuturesOrder (${response.status}): ${errorText}`,
+      );
+    }
+
+    const responseText = await response.text();
+    return JSONbig.parse(responseText);
+  },
+  whitelistedRequest: async function ({
+    method,
+    urlPath,
+    queryString,
+    payload,
+  }: {
+    method: string;
+    urlPath: string;
+    queryString: string;
+    payload: any;
+  }) {
+    if (!this.config.credentials) {
+      throw new Error("No credentials found. Call initialize first!");
+    }
+
+    const headers = signRequestRest(this.config.credentials, {
+      method,
+      urlPath,
+      queryString,
+      payload: payload ? JSON.stringify(payload) : ""
+    });
+    const response = await fetch(this.config.baseUrl + urlPath, {
+      method,
+      headers: {
+        "Content-Type": "application/json",
+        ...headers,
+      },
+      body: payload ? JSON.stringify(payload) : ""
     });
     if (!response.ok) {
       const errorText = await response.text();

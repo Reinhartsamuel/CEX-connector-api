@@ -1,3 +1,9 @@
+export interface WebSocketAuthOptions {
+  channel: string;
+  event: string;
+  timestamp?: number;
+}
+
 export interface GateCredentials {
   key: string;
   secret: string;
@@ -16,9 +22,6 @@ export interface GateFuturesOrder {
   reduce_only: boolean;
   auto_size: string;
   settle: string;
-  take_profit?: string;
-  stop_loss?: string;
-  close?: boolean;
 }
 
 interface InitialTriggerPriceOrderRequest {
@@ -47,4 +50,11 @@ export interface SignRequestOptions {
   urlPath: string;
   queryString: string;
   payload?: string;
+}
+export interface WebSocketMessage {
+  time: number;
+  channel: string;
+  event: string;
+  payload?: any[];
+  auth?: Record<string, string>;
 }

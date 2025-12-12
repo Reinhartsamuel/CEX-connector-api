@@ -46,7 +46,7 @@
             ],
             "body": {
               "mode": "raw",
-              "raw": "{\n  \"market_type\": \"market\",\n  \"price\": 50000.0,\n  \"contract\": \"BTC_USDT\",\n  \"leverage\": 10,\n  \"leverage_type\": \"ISOLATED\",\n  \"size\": 1000,\n  \"position_type\": \"long\",\n  \"take_profit\": {\n    \"enabled\": true,\n    \"price\": \"52000\",\n    \"price_type\": \"mark\"\n  },\n  \"stop_loss\": {\n    \"enabled\": true,\n    \"price\": \"48000\",\n    \"price_type\": \"mark\"\n  }\n}"
+              "raw": "{\n  \"market_type\": \"market\",\n  \"price\": 50000.0,\n  \"contract\": \"BTC_USDT\",\n  \"leverage\": 10,\n  \"leverage_type\": \"ISOLATED\",\n  \"size\": 1000,\n  \"position_type\": \"long\",\n  \"take_profit\": {\n    \"enabled\": true,\n    \"price\": \"52000\",\n    \"price_type\": \"mark\"\n  },\n  \"stop_loss\": {\n    \"enabled\": true,\n    \"price\": \"48000\",\n    \"price_type\": \"mark\"\n  },\n  \"reduce_only\": false\n}"
             },
             "url": {
               "raw": "{{baseUrl}}/gate/place-futures-order",

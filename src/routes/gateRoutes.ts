@@ -1,15 +1,25 @@
-import { Hono } from "hono";
+import { Context, Hono } from "hono";
 import { GateHandler } from "../handlers/gate/gate_handler";
 import { zValidator } from "@hono/zod-validator";
 import { validationErrorHandler } from "../middleware/validationErrorHandler";
 import { placeFuturesOrdersSchema } from "../schemas/gateSchemas";
+import { cleanup, clear, del, get, getAll } from "../utils/cache";
 
 const gateRouter = new Hono();
 
 gateRouter.post(
   "/place-futures-order",
   zValidator("json", placeFuturesOrdersSchema, validationErrorHandler),
-  GateHandler.order,
+  GateHandler.futuresOrder,
+);
+gateRouter.post(
+  "/place-futures-order-x",
+  zValidator("json", placeFuturesOrdersSchema, validationErrorHandler),
+  GateHandler.futuresOrderDb,
+);
+gateRouter.post(
+  "/close-futures-order-x",
+  GateHandler.closePositionDb,
 );
 
 gateRouter.post(
@@ -25,6 +35,26 @@ gateRouter.delete(
 gateRouter.get(
   "/get-futures-order",
   GateHandler.getOrderDetails,
+);
+gateRouter.get(
+  "/account-info",
+  GateHandler.getAccountDetails
+);
+gateRouter.post(
+  "/whitelist-request",
+  GateHandler.playground
+);
+gateRouter.get(
+
+ async function (c:Context) {
+   // del('trade:56013524483295954');
+   // clear()
+   const testGet = getAll();
+   return c.json({
+     message:'oke',
+     testGet
+   })
+ },
 );
 
 export default gateRouter;

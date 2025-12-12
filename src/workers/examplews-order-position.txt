@@ -1,0 +1,162 @@
+🏓 PING → user=16778193
+🏓 PING → user=16778193
+🏓 PING → user=16778193
+🏓 PING → user=16778193
+📥 POSITIONS UPDATE (16778193): {
+  "time": 1765188678,
+  "time_ms": 1765188678578,
+  "channel": "futures.positions",
+  "event": "update",
+  "result": [
+    {
+      "time": 1765188678,
+      "time_ms": 1765188678577,
+      "size": -1,
+      "user": "16778193",
+      "leverage_max": 100,
+      "mode": "dual_short",
+      "update_id": 770,
+      "cross_leverage_limit": 2,
+      "liq_price": 0.21492,
+      "maintenance_rate": 0.15,
+      "risk_limit": 70000000,
+      "last_close_pnl": 0.100374329,
+      "entry_price": 0.144,
+      "leverage": 2,
+      "realised_pnl": -0.000288,
+      "contract": "DOGE_USDT",
+      "history_point": 0,
+      "margin": 0.72162,
+      "realised_point": 0,
+      "history_pnl": 0.0192034678,
+      "margin_mode": "isolated",
+      "lever": "2"
+    }
+  ]
+}
+📥 ORDERS UPDATE (16778193): {
+  "time": 1765188678,
+  "time_ms": 1765188678578,
+  "channel": "futures.orders",
+  "event": "update",
+  "result": [
+    {
+      "create_time": 1765188234,
+      "create_time_ms": 1765188234806,
+      "fill_price": 0.144,
+      "finish_as": "filled",
+      "iceberg": 0,
+      "id": "56013524607868433",
+      "id_string": "56013524607868433",
+      "is_close": false,
+      "is_liq": false,
+      "left": 0,
+      "mkfr": 0.0002,
+      "is_reduce_only": false,
+      "status": "finished",
+      "tkfr": 0.0005,
+      "price": 0.144,
+      "refu": 0,
+      "refr": 0,
+      "size": -1,
+      "text": "api",
+      "tif": "gtc",
+      "finish_time": 1765188678,
+      "finish_time_ms": 1765188678577,
+      "user": "16778193",
+      "contract": "DOGE_USDT",
+      "stop_profit_price": "",
+      "stop_loss_price": "",
+      "amend_text": "-",
+      "biz_info": "dual",
+      "stp_act": "-",
+      "stp_id": "0",
+      "update_id": 2,
+      "is_voucher": false,
+      "update_time": 1765188678577,
+      "fee": 0.000288,
+      "point_fee": 0,
+      "role": "maker",
+      "bbo": "-"
+    }
+  ]
+}
+🤮🤮🤮🤮🤮🤮classified order event: order_filled_open
+getting trades with trade.id: 56013524607868433, raw:: {
+  "create_time": 1765188234,
+  "create_time_ms": 1765188234806,
+  "fill_price": 0.144,
+  "finish_as": "filled",
+  "iceberg": 0,
+  "id": "56013524607868433",
+  "id_string": "56013524607868433",
+  "is_close": false,
+  "is_liq": false,
+  "left": 0,
+  "mkfr": 0.0002,
+  "is_reduce_only": false,
+  "status": "finished",
+  "tkfr": 0.0005,
+  "price": 0.144,
+  "refu": 0,
+  "refr": 0,
+  "size": -1,
+  "text": "api",
+  "tif": "gtc",
+  "finish_time": 1765188678,
+  "finish_time_ms": 1765188678577,
+  "user": "16778193",
+  "contract": "DOGE_USDT",
+  "stop_profit_price": "",
+  "stop_loss_price": "",
+  "amend_text": "-",
+  "biz_info": "dual",
+  "stp_act": "-",
+  "stp_id": "0",
+  "update_id": 2,
+  "is_voucher": false,
+  "update_time": 1765188678577,
+  "fee": 0.000288,
+  "point_fee": 0,
+  "role": "maker",
+  "bbo": "-"
+}
+🧭 position event: position_opened for DOGE_USDT:dual_short
+36 |   async queryWithCache(queryString, params, query) {
+37 |     if (this.cache === void 0 || is(this.cache, NoopCache) || this.queryMetadata === void 0) {
+38 |       try {
+39 |         return await query();
+40 |       } catch (e) {
+41 |         throw new DrizzleQueryError(queryString, params, e);
+                   ^
+error: Failed query: select "id", "user_id", "exchange_id", "trade_id", "order_id", "open_order_id", "open_fill_price", "open_filled_at", "close_order_id", "close_filled_at", "close_reason", "contract", "position_type", "market_type", "size", "price", "leverage", "leverage_type", "status", "position_status", "reduce_only", "take_profit_enabled", "take_profit_executed", "take_profit_price", "take_profit_price_type", "stop_loss_enabled", "stop_loss_executed", "stop_loss_price", "stop_loss_price_type", "metadata", "is_tpsl", "tpsl_type", "parent_trade_id", "created_at", "updated_at" from "trades" where "trades"."trade_id" = $1
+params: 56013524607868433
+  query: "select \"id\", \"user_id\", \"exchange_id\", \"trade_id\", \"order_id\", \"open_order_id\", \"open_fill_price\", \"open_filled_at\", \"close_order_id\", \"close_filled_at\", \"close_reason\", \"contract\", \"position_type\", \"market_type\", \"size\", \"price\", \"leverage\", \"leverage_type\", \"status\", \"position_status\", \"reduce_only\", \"take_profit_enabled\", \"take_profit_executed\", \"take_profit_price\", \"take_profit_price_type\", \"stop_loss_enabled\", \"stop_loss_executed\", \"stop_loss_price\", \"stop_loss_price_type\", \"metadata\", \"is_tpsl\", \"tpsl_type\", \"parent_trade_id\", \"created_at\", \"updated_at\" from \"trades\" where \"trades\".\"trade_id\" = $1",
+ params: [
+  [Object ...]
+],
+
+      at queryWithCache (/Users/reinhartsulilatu/Repos/byscript-connector-api/node_modules/drizzle-orm/pg-core/session.js:41:15)
+
+790 |     }
+791 |   )
+792 |   Error.captureStackTrace(error, notSupported)
+793 |   return error
+794 | }
+          ^
+PostgresError: column "open_order_id" does not exist
+ severity_local: "ERROR",
+   severity: "ERROR",
+   position: "64",
+       file: "parse_relation.c",
+    routine: "errorMissingColumn",
+       code: "42703"
+
+      at ErrorResponse (/Users/reinhartsulilatu/Repos/byscript-connector-api/node_modules/postgres/src/errors.js:794:5)
+ error query
+updating trade id 56013524607868433 to "waiting_targets"
+trade Data::::: please handle TP/SL null
+🏓 PING → user=16778193
+🏓 PING → user=16778193
+🏓 PING → user=16778193
+🏓 PING → user=16778193
