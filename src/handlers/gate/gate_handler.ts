@@ -1,3 +1,5 @@
+/* eslint-disable no-alert */
+/* eslint-disable @typescript-eslint/no-explicit-any */
 import { Context } from "hono";
 import { GateServices } from "../../services/gateServices";
 import {
@@ -51,7 +53,7 @@ export const GateHandler = {
       const api_key = c.req.header("api-key")!;
       const api_secret = c.req.header("api-secret")!;
       GateServices.initialize(api_key, api_secret);
-      let allReturn: { message: string; data: any } = {
+      const allReturn: { message: string; data: any } = {
         message: "ok",
         data: null,
       };
@@ -214,7 +216,7 @@ export const GateHandler = {
 
     // orderType used by both TP and SL blocks
     const orderType = getOrderType(body.position_type);
-    let initialPrice = orderType.includes("position")
+    const initialPrice = orderType.includes("position")
       ? "0"
       : body.trigger_price.toString();
 
@@ -404,7 +406,7 @@ export const GateHandler = {
       const { api_key, api_secret, user_id } =
         await GateHandler.unwrapCredentials(body.exchange_id);
       GateServices.initialize(api_key, api_secret);
-      let allReturn: { message: string; data: any } = {
+      const allReturn: { message: string; data: any } = {
         message: "ok",
         data: null,
       };
@@ -484,7 +486,7 @@ export const GateHandler = {
 
       // orderType used by both TP and SL blocks
       const orderType = getOrderType(body.position_type);
-      let initialPrice = orderType.includes("position") ? "0" : priceStr;
+      const initialPrice = orderType.includes("position") ? "0" : priceStr;
 
       let autoSize = "close_long";
       if (body.position_type == "short") {
@@ -600,7 +602,7 @@ export const GateHandler = {
         console.log(addData, "addData");
         const newTrade = await postgresDb
           .insert(trades)
-          .values(addData)
+          .values(addData as any)
           .returning();
         allReturn.data.newTrade = newTrade;
       } catch (err) {
