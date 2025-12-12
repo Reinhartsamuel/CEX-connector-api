@@ -42,7 +42,8 @@ app.get('/health', async (c) => {
   }
 });
 
-const port = parseInt(process.env['PORT'] || '1122')
+// const port = parseInt(process.env['PORT'] || '1122')
+const port = parseInt(process.env.PORT!)
 // console.log(`Server starting on port ${port}`)
 // Initialize connections on startup
 async function initializeConnections() {
