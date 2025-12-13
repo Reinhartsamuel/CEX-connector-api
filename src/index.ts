@@ -42,8 +42,8 @@ app.get('/health', async (c) => {
   }
 });
 
-// const port = parseInt(process.env['PORT'] || '1122')
-const port = parseInt(process.env.PORT!)
+const port = parseInt(process.env['PORT'] || '1122')
+// const port = parseInt(process.env.PORT!)
 // console.log(`Server starting on port ${port}`)
 // Initialize connections on startup
 async function initializeConnections() {
@@ -113,7 +113,7 @@ startApp().catch(error => {
   process.exit(1);
 });
 
-Bun.serve({
-  port,
-  fetch: app.fetch,
-})
+// Bun.serve({
+//   port,
+//   fetch: app.fetch,
+// })
