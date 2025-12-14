@@ -1,10 +1,11 @@
+/* eslint-disable no-case-declarations */
 import WebSocket from "ws";
 import Redis from "ioredis";
 import JSONbig from "json-bigint";
 import { signWebSocketRequest } from "../utils/signRequest";
 import { postgresDb } from "../db/client";
-import { Trade, trades } from "../db/schema";
-import { eq } from "drizzle-orm";
+import { exchanges, Trade, trades } from "../db/schema";
+import { and, desc, eq } from "drizzle-orm";
 
 // ---- Redis Setup ---- //
 const redis = new Redis(process.env.REDIS_URL || "redis://127.0.0.1:6379");
@@ -25,7 +26,7 @@ const connections = new Map<string, UserConnection>();
 (async () => {
   console.log("WS Worker: Listening for control commands...");
   await control.subscribe(CTRL_CHANNEL);
-
+  // setInterval(() => { console.log(`Number of connections: ${connections.size} `) }, 5000);
   control.on("message", (chan, msg) => {
     if (chan !== CTRL_CHANNEL) return;
 
@@ -215,27 +216,26 @@ async function onWsMessage(userId: string, raw: Buffer) {
   }
 
   if (channel === "futures.orders") {
-    console.log(`📥 ORDERS UPDATE (${userId}):`, JSON.stringify(msg, null, 2));
-    const id = payload.id_string || String(payload.id);
+    // console.log(`📥 ORDERS UPDATE (${userId}):`, JSON.stringify(msg, null, 2));
 
     // Handle order updates
     await Promise.all(
       items.map(async (item: any) => {
         const event = classifyOrderEvent(item);
         console.log("🤮🤮🤮🤮🤮🤮classified order event:", event);
-        if (event === 'subscribe_ack') return;
+        if (event === "subscribe_ack") return;
 
-        console.log(`getting trades with trade.id: ${item.id ?? item.id_string}`)
+        // console.log(`getting trades with trade.id: ${item.id_string}`)
         let tradeData: Trade | null = null;
         if (item?.id || item?.id_string) {
           try {
             const [row] = await postgresDb
               .select()
               .from(trades)
-              .where(eq(trades.trade_id, item.id ?? item.id_string));
-            tradeData = row
+              .where(eq(trades.trade_id, item.id_string));
+            tradeData = row;
           } catch (e) {
-            console.error(e, 'error query')
+            console.error(e, "error query");
           }
         }
         // ========================EVENT HANDLING========================
@@ -248,7 +248,10 @@ async function onWsMessage(userId: string, raw: Buffer) {
               // but also _do not_ consider position > open until positions.update arrives;
               // mark trade as filled_at: item.finish_time / fill_price, then wait for positions update.
               console.log(`updating trade id ${item.id_string} to "waiting_targets"`);
-              await postgresDb.update(trades).set({ status: "waiting_targets" }).where(eq(trades.trade_id, item.id_string));
+              await postgresDb
+                .update(trades)
+                .set({ status: "waiting_targets" })
+                .where(eq(trades.trade_id, item.id_string));
               console.log(
                 "trade Data::::: please handle TP/SL",
                 JSON.stringify(tradeData, null, 2),
@@ -256,16 +259,15 @@ async function onWsMessage(userId: string, raw: Buffer) {
               break;
 
             case "order_filled_close":
-              // this is a close-order filled (could be manual close or API close).
-              // mark DB trade as closed (or add a 'closed_by' field with order id)
-              console.log(`updating trade id ${item.id_string} to "closed"`);
-              await postgresDb.update(trades).set({ status: "closed" }).where(eq(trades.trade_id, item.linked_open_order_id ?? item.related_id ?? item.id_string));
               break;
 
             case "order_partial_fill":
               // set status partially_filled and update left
-              console.log(`updating trade id ${item.id_string} to "partially_filled"`);
-              await postgresDb.update(trades).set({ status: "partially_filled" }).where(eq(trades.trade_id, item.id_string));
+              // console.log(`updating trade id ${item.id_string} to "partially_filled"`);
+              await postgresDb
+                .update(trades)
+                .set({ status: "partially_filled" })
+                .where(eq(trades.trade_id, item.id_string));
               break;
 
             default:
@@ -273,23 +275,13 @@ async function onWsMessage(userId: string, raw: Buffer) {
               console.log("order event not handled:", item);
           }
         } else {
-          console.log('🙏🙏🙏🙏 no trade.id_string')
+          console.log("🙏🙏🙏🙏 no trade.id_string");
         }
         //================================================================
         //================================================================
         //================================================================
         //================================================================
         //================================================================
-
-
-        const orderId = String(
-          item.id_string ?? item.order_id ?? item.trade_id ?? "unknown",
-        );
-        await redis.hset(
-          `user:${userId}:orders`,
-          orderId,
-          JSON.stringify(item),
-        );
         await redis.publish(`user:${userId}:orders:chan`, JSON.stringify(item));
       }),
     );
@@ -303,12 +295,17 @@ async function onWsMessage(userId: string, raw: Buffer) {
     // Handle position updates
     await Promise.all(
       items.map(async (item: any) => {
-        const positionId = String(item.id ?? item.position_id ?? item.contract ?? "unknown");
-
         await handlePositionItem(userId, item);
-        await redis.hset(`user:${userId}:positions`, positionId, JSON.stringify(item));
-        await redis.publish(`user:${userId}:positions:chan`, JSON.stringify(item));
-      })
+
+        // store current position
+        // const positionId = String(item.id ?? item.position_id ?? item.contract ?? "unknown");
+        // await redis.hset(`user:${userId}:positions`, positionId, JSON.stringify(item));
+
+        await redis.publish(
+          `user:${userId}:positions:chan`,
+          JSON.stringify(item),
+        );
+      }),
     );
   }
 }
@@ -368,8 +365,6 @@ process.on("SIGINT", () => {
   process.exit(0);
 });
 
-
-
 // --------------------- helper types ---------------------
 type OrderItem = any;
 type PositionItem = any;
@@ -377,8 +372,8 @@ type PositionItem = any;
 type OrderEvent =
   | "subscribe_ack"
   | "order_partial_fill"
-  | "order_filled_open"        // filled and opened a position (is_reduce_only=false)
-  | "order_filled_close"       // filled and closed (is_reduce_only=true)
+  | "order_filled_open" // filled and opened a position (is_reduce_only=false)
+  | "order_filled_close" // filled and closed (is_reduce_only=true)
   | "order_cancelled"
   | "order_other";
 
@@ -386,7 +381,8 @@ type PositionEvent =
   | "position_opened"
   | "position_changed"
   | "position_closed"
-  | "position_heartbeat";
+  | "position_heartbeat"
+  | "unknown";
 
 // --------------------- classifier helpers ---------------------
 function classifyOrderEvent(item: OrderItem): OrderEvent {
@@ -399,7 +395,7 @@ function classifyOrderEvent(item: OrderItem): OrderEvent {
   const left = Number(item?.left ?? 0);
   const status = item?.status ?? null; // "finished" or "success"
   const isReduce = Boolean(item?.is_reduce_only || item?.is_close);
-  const role = item?.role ?? "";
+  // const role = item?.role ?? "";
   const size = Number(item?.size ?? 0);
 
   if (status === "finished" && finish === "filled" && left === 0) {
@@ -407,7 +403,10 @@ function classifyOrderEvent(item: OrderItem): OrderEvent {
     return "order_filled_open";
   }
 
-  if ((status === "finished" && finish === "cancelled") || finish === "cancelled") {
+  if (
+    (status === "finished" && finish === "cancelled") ||
+    finish === "cancelled"
+  ) {
     return "order_cancelled";
   }
 
@@ -416,46 +415,134 @@ function classifyOrderEvent(item: OrderItem): OrderEvent {
   return "order_other";
 }
 
-function classifyPositionEvent(item: PositionItem, prev?: PositionItem): PositionEvent {
+function classifyPositionEvent(
+  item: PositionItem,
+  prev?: PositionItem,
+): PositionEvent {
   const newSize = Number(item?.size ?? 0);
   const prevSize = prev ? Number(prev.size ?? 0) : 0;
 
+  console.log("===========classifyPositionEvent===========");
+  console.log("===========classifyPositionEvent===========");
+  console.log("===========classifyPositionEvent===========");
+  console.log("===========classifyPositionEvent===========");
+  console.log(`prevSize: ${prevSize}, newSize: ${newSize}`);
+  console.log("===========classifyPositionEvent===========");
+  console.log("===========classifyPositionEvent===========");
+  console.log("===========classifyPositionEvent===========");
+  console.log("===========classifyPositionEvent===========");
+
   if (prev === undefined && newSize !== 0) return "position_opened";
-  if (prev !== undefined && newSize === 0 && prevSize !== 0) return "position_closed";
+  if (prev !== undefined && newSize === 0 && prevSize !== 0)
+    return "position_closed";
   if (prev !== undefined && newSize !== prevSize) return "position_changed";
 
-  return "position_heartbeat";
+  return "unknown";
 }
 
 async function handlePositionItem(userId: string, item: any) {
+  console.log(
+    `🚗🚗🚗🚗🚗🚗🚗 item: ${JSON.stringify(item)}, please ignore if undefined ${item == undefined}`,
+  );
+  if (item?.status === "success") {
+    console.log(
+      `NGECEK ITEM STATUS SUCCESS NGGAK ${JSON.stringify(item)}, :::::: item?.status === 'success'????? ::::${item?.status === "success"}`,
+    );
+    return;
+  }
   // compute a convenient key (contract:mode) same as when you save
   const mode = item.mode ?? item.position_side ?? "";
   const positionKey = `${item.contract}:${mode}`;
 
-  // fetch previous cached version (if any)
-  let prevRaw = await redis.hget(`user:${userId}:positions`, positionKey);
-  let prev = prevRaw ? JSON.parse(prevRaw) : undefined;
+  // fetch previous position exposure (if any)
+  const prevRaw = await redis.hget(`user:${userId}:positions`, positionKey);
+  const prev = prevRaw ? JSON.parse(prevRaw) : undefined;
+  // const exchange = await postgresDb.query.exchanges.findFirst({
+  //   columns: {
+  //     id: true,  // Only select the id column
+  //   },
+  //   where:eq(exchanges.exchange_user_id, item.user),
+  //   });
+
+  // const prev = await postgresDb.query.trades.findFirst({
+  //   columns: {
+  //     id: true,  // Only select the id column
+  //     size:true,
+  //     contract:true,
+  //     order_id:true,
+  //   },
+  //   where: and(
+  //     eq(trades.status, 'waiting_targets'),
+  //     eq(trades.contract, item.contract),
+  //     eq(trades.exchange_id, exchange!.id),
+  //   ),
+  //   orderBy: desc(trades.created_at),
+  // });
+
+  console.log(
+    `🚀🚀🚀🚀🚀🚀🚀🚀 getting previous position data for user:${userId}:positions positionKey: ${positionKey}: ${JSON.stringify(prev, null, 2)}🚀🚀🚀🚀🚀🚀🚀🚀`,
+  );
 
   const event = classifyPositionEvent(item, prev);
   console.log("🧭 position event:", event, "for", positionKey);
 
-  // Always update cache & publish (so UI & other services get the raw payload)
-  await redis.hset(`user:${userId}:positions`, positionKey, JSON.stringify(item));
-  await redis.publish(`user:${userId}:positions:chan`, JSON.stringify(item));
-
   // now business logic
   switch (event) {
     case "position_opened":
-      break;
-
     case "position_changed":
-      // size changed (user added/removed or partial fills)
+      // Always update cache & publish (so UI & other services get the raw payload)
+      await redis.hset(
+        `user:${userId}:positions`,
+        positionKey,
+        JSON.stringify(item),
+      );
+      await redis.publish(
+        `user:${userId}:positions:chan`,
+        JSON.stringify(item),
+      );
       break;
 
     case "position_closed":
+      // query trades where status === waiting_targets &&
+      // exchange_user_id == item.user_id &&
+      // contract == item.contract
+      const exchange = await postgresDb.query.exchanges.findFirst({
+        columns: {
+          id: true, // Only select the id column
+        },
+        where: eq(exchanges.exchange_user_id, String(item.user)),
+      });
+
+
+      const updatedTrade = await postgresDb
+        .update(trades)
+        .set({
+          // Your update fields here, for example:
+          status: "closed",
+          closed_at: new Date(),
+          pnl: item.realised_pnl ?? 0,
+        })
+        .where(
+          and(
+            eq(trades.status, "waiting_targets"),
+            eq(trades.contract, item.contract),
+            eq(trades.exchange_id, exchange!.id),
+          ),
+        )
+        .returning({
+          id: trades.id,
+          // Include any other fields you want to return
+          status: trades.status,
+          contract: trades.contract,
+        });
+      console.log(
+        `😭🚀🤮🔥🅾🫡😭🚀🤮🔥🅾🫡😭🚀🤮🔥🅾🫡😭🚀🤮🔥🅾🫡😭🚀🤮🔥🅾🫡😭🚀🤮🔥🅾🫡 position for id ${updatedTrade[0].id}:::: ${JSON.stringify(updatedTrade, null, 2)}`,
+      );
+
+      await redis.hdel(`user:${userId}:positions`, positionKey);
       break;
 
-    case "position_heartbeat":
+    case "unknown":
       // keep-alive / update only PnL; optional DB update
       break;
   }

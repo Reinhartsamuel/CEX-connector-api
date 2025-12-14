@@ -450,21 +450,7 @@ export const GateHandler = {
       console.log(orderPayload, "orderPayload");
       const resPlaceOrder = await GateServices.placeFuturesOrder(orderPayload);
       console.log(resPlaceOrder, "resPlaceOrder");
-      if (resPlaceOrder?.status) {
-        set(
-          `trade:${resPlaceOrder.id}`,
-          {
-            ...resPlaceOrder,
-            take_profit: body.take_profit.enabled
-              ? { ...body.take_profit, executed: false }
-              : null,
-            stop_loss: body.stop_loss.enabled
-              ? { ...body.stop_loss, executed: false }
-              : null,
-          },
-          null,
-        );
-      }
+
       allReturn.data = { resPlaceOrder };
 
       // Store credentials and trigger WebSocket connection
@@ -498,6 +484,12 @@ export const GateHandler = {
         body.take_profit.enabled &&
         body.market_type === "market"
       ) {
+        // directly save current exposure to Redis if
+        // order market and successful
+        const positionKey = `${resPlaceOrder.contract}:dual_${body.position_type}`;
+        await redis.hset(`user:${resPlaceOrder?.user}:positions`, positionKey, JSON.stringify(resPlaceOrder))
+
+        // TRIGGER TP / SL only for market orders
         const payload: GateTriggerPriceOrder = {
           initial: {
             contract: body.contract,
@@ -731,15 +723,15 @@ export const GateHandler = {
         payload: any;
       };
 
-      // const res = await GateServices.whitelistedRequest({
-      //   method: body.method,
-      //   urlPath:body.urlPath,
-      //   queryString:body.queryString,
-      //   payload:body.payload
-      // });
+      const res = await GateServices.whitelistedRequest({
+        method: body.method,
+        urlPath:body.urlPath,
+        queryString:body.queryString,
+        payload:body.payload
+      });
 
-      // return c.json(res);
-      return c.json(body);
+      return c.json(res);
+      // return c.json(body);
     } catch (e) {
       console.error(e, "ERROR 500 GET ORDER DETAILS");
       if (e instanceof Error) {

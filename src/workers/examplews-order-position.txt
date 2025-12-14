@@ -1,53 +1,61 @@
-🏓 PING → user=16778193
-🏓 PING → user=16778193
-🏓 PING → user=16778193
-🏓 PING → user=16778193
-📥 POSITIONS UPDATE (16778193): {
-  "time": 1765188678,
-  "time_ms": 1765188678578,
-  "channel": "futures.positions",
-  "event": "update",
-  "result": [
-    {
-      "time": 1765188678,
-      "time_ms": 1765188678577,
-      "size": -1,
-      "user": "16778193",
-      "leverage_max": 100,
-      "mode": "dual_short",
-      "update_id": 770,
-      "cross_leverage_limit": 2,
-      "liq_price": 0.21492,
-      "maintenance_rate": 0.15,
-      "risk_limit": 70000000,
-      "last_close_pnl": 0.100374329,
-      "entry_price": 0.144,
-      "leverage": 2,
-      "realised_pnl": -0.000288,
-      "contract": "DOGE_USDT",
-      "history_point": 0,
-      "margin": 0.72162,
-      "realised_point": 0,
-      "history_pnl": 0.0192034678,
-      "margin_mode": "isolated",
-      "lever": "2"
-    }
-  ]
-}
+Last login: Thu Dec 11 04:10:47 on ttys004
+reinhartsulilatu@Reinharts-MacBook-Pro byscript-connector-api % bun run src/workers/gateWorkerRunner.ts
+WS Worker: Listening for control commands...
+WS Worker: Opening WS for user 16778193
+WS Worker: WS OPEN for user 16778193
+📡 SUBSCRIBED (ORDERS) user=16778193
+📡 SUBSCRIBED (POSITIONS) user=16778193
 📥 ORDERS UPDATE (16778193): {
-  "time": 1765188678,
-  "time_ms": 1765188678578,
+  "time": 1765654561,
+  "time_ms": 1765654561199,
+  "conn_id": "0c6c206c262ccddf",
+  "trace_id": "41d2141e3a4ebd411fec6ae32f91113b",
+  "channel": "futures.orders",
+  "event": "subscribe",
+  "payload": [
+    "16778193",
+    "!all"
+  ],
+  "result": {
+    "status": "success"
+  }
+}
+🤮🤮🤮🤮🤮🤮classified order event: subscribe_ack
+📥 POSITIONS UPDATE (16778193): {
+  "time": 1765654561,
+  "time_ms": 1765654561199,
+  "conn_id": "0c6c206c262ccddf",
+  "trace_id": "41d2141e3a4ebd411fec6ae32f91113b",
+  "channel": "futures.positions",
+  "event": "subscribe",
+  "payload": [
+    "16778193",
+    "!all"
+  ],
+  "result": {
+    "status": "success"
+  }
+}
+🚗🚗🚗🚗🚗🚗🚗 item: {"status":"success"}, please ignore if undefined false
+🚀🚀🚀🚀🚀🚀🚀🚀 getting previous position data for user:16778193:positions positionKey: undefined:: undefined🚀🚀🚀🚀🚀🚀🚀🚀
+🧭 position event: position_heartbeat for undefined:
+🏓 PING → user=16778193
+🏓 PING → user=16778193
+🏓 PING → user=16778193
+📥 ORDERS UPDATE (16778193): {
+  "time": 1765654652,
+  "time_ms": 1765654652126,
   "channel": "futures.orders",
   "event": "update",
   "result": [
     {
-      "create_time": 1765188234,
-      "create_time_ms": 1765188234806,
-      "fill_price": 0.144,
+      "create_time": 1765654559,
+      "create_time_ms": 1765654559909,
+      "fill_price": 0.13898,
       "finish_as": "filled",
       "iceberg": 0,
-      "id": "56013524607868433",
-      "id_string": "56013524607868433",
+      "id": "56013524660920448",
+      "id_string": "56013524660920448",
       "is_close": false,
       "is_liq": false,
       "left": 0,
@@ -55,14 +63,14 @@
       "is_reduce_only": false,
       "status": "finished",
       "tkfr": 0.0005,
-      "price": 0.144,
+      "price": 0.13898,
       "refu": 0,
       "refr": 0,
       "size": -1,
       "text": "api",
       "tif": "gtc",
-      "finish_time": 1765188678,
-      "finish_time_ms": 1765188678577,
+      "finish_time": 1765654652,
+      "finish_time_ms": 1765654652125,
       "user": "16778193",
       "contract": "DOGE_USDT",
       "stop_profit_price": "",
@@ -73,8 +81,8 @@
       "stp_id": "0",
       "update_id": 2,
       "is_voucher": false,
-      "update_time": 1765188678577,
-      "fee": 0.000288,
+      "update_time": 1765654652125,
+      "fee": 0.00027796,
       "point_fee": 0,
       "role": "maker",
       "bbo": "-"
@@ -82,80 +90,115 @@
   ]
 }
 🤮🤮🤮🤮🤮🤮classified order event: order_filled_open
-getting trades with trade.id: 56013524607868433, raw:: {
-  "create_time": 1765188234,
-  "create_time_ms": 1765188234806,
-  "fill_price": 0.144,
-  "finish_as": "filled",
-  "iceberg": 0,
-  "id": "56013524607868433",
-  "id_string": "56013524607868433",
-  "is_close": false,
-  "is_liq": false,
-  "left": 0,
-  "mkfr": 0.0002,
-  "is_reduce_only": false,
-  "status": "finished",
-  "tkfr": 0.0005,
-  "price": 0.144,
-  "refu": 0,
-  "refr": 0,
-  "size": -1,
-  "text": "api",
-  "tif": "gtc",
-  "finish_time": 1765188678,
-  "finish_time_ms": 1765188678577,
-  "user": "16778193",
-  "contract": "DOGE_USDT",
-  "stop_profit_price": "",
-  "stop_loss_price": "",
-  "amend_text": "-",
-  "biz_info": "dual",
-  "stp_act": "-",
-  "stp_id": "0",
-  "update_id": 2,
-  "is_voucher": false,
-  "update_time": 1765188678577,
-  "fee": 0.000288,
-  "point_fee": 0,
-  "role": "maker",
-  "bbo": "-"
+getting trades with trade.id: 56013524660920448
+📥 POSITIONS UPDATE (16778193): {
+  "time": 1765654652,
+  "time_ms": 1765654652126,
+  "channel": "futures.positions",
+  "event": "update",
+  "result": [
+    {
+      "time": 1765654652,
+      "time_ms": 1765654652125,
+      "size": -1,
+      "user": "16778193",
+      "leverage_max": 100,
+      "mode": "dual_short",
+      "update_id": 868,
+      "cross_leverage_limit": 2,
+      "liq_price": 0.20743,
+      "maintenance_rate": 0.15,
+      "risk_limit": 70000000,
+      "last_close_pnl": -0.0008733,
+      "entry_price": 0.13898,
+      "leverage": 2,
+      "realised_pnl": -0.00027796,
+      "contract": "DOGE_USDT",
+      "history_point": 0,
+      "margin": 0.696463525,
+      "realised_point": 0,
+      "history_pnl": 0.048109197,
+      "margin_mode": "isolated",
+      "lever": "2"
+    }
+  ]
 }
+🚗🚗🚗🚗🚗🚗🚗 item: {"time":1765654652,"time_ms":1765654652125,"size":-1,"user":"16778193","leverage_max":100,"mode":"dual_short","update_id":868,"cross_leverage_limit":2,"liq_price":0.20743,"maintenance_rate":0.15,"risk_limit":70000000,"last_close_pnl":-0.0008733,"entry_price":0.13898,"leverage":2,"realised_pnl":-0.00027796,"contract":"DOGE_USDT","history_point":0,"margin":0.696463525,"realised_point":0,"history_pnl":0.048109197,"margin_mode":"isolated","lever":"2"}, please ignore if undefined false
+🚀🚀🚀🚀🚀🚀🚀🚀 getting previous position data for user:16778193:positions positionKey: DOGE_USDT:dual_short: undefined🚀🚀🚀🚀🚀🚀🚀🚀
 🧭 position event: position_opened for DOGE_USDT:dual_short
-36 |   async queryWithCache(queryString, params, query) {
-37 |     if (this.cache === void 0 || is(this.cache, NoopCache) || this.queryMetadata === void 0) {
-38 |       try {
-39 |         return await query();
-40 |       } catch (e) {
-41 |         throw new DrizzleQueryError(queryString, params, e);
-                   ^
-error: Failed query: select "id", "user_id", "exchange_id", "trade_id", "order_id", "open_order_id", "open_fill_price", "open_filled_at", "close_order_id", "close_filled_at", "close_reason", "contract", "position_type", "market_type", "size", "price", "leverage", "leverage_type", "status", "position_status", "reduce_only", "take_profit_enabled", "take_profit_executed", "take_profit_price", "take_profit_price_type", "stop_loss_enabled", "stop_loss_executed", "stop_loss_price", "stop_loss_price_type", "metadata", "is_tpsl", "tpsl_type", "parent_trade_id", "created_at", "updated_at" from "trades" where "trades"."trade_id" = $1
-params: 56013524607868433
-  query: "select \"id\", \"user_id\", \"exchange_id\", \"trade_id\", \"order_id\", \"open_order_id\", \"open_fill_price\", \"open_filled_at\", \"close_order_id\", \"close_filled_at\", \"close_reason\", \"contract\", \"position_type\", \"market_type\", \"size\", \"price\", \"leverage\", \"leverage_type\", \"status\", \"position_status\", \"reduce_only\", \"take_profit_enabled\", \"take_profit_executed\", \"take_profit_price\", \"take_profit_price_type\", \"stop_loss_enabled\", \"stop_loss_executed\", \"stop_loss_price\", \"stop_loss_price_type\", \"metadata\", \"is_tpsl\", \"tpsl_type\", \"parent_trade_id\", \"created_at\", \"updated_at\" from \"trades\" where \"trades\".\"trade_id\" = $1",
- params: [
-  [Object ...]
-],
-
-      at queryWithCache (/Users/reinhartsulilatu/Repos/byscript-connector-api/node_modules/drizzle-orm/pg-core/session.js:41:15)
-
-790 |     }
-791 |   )
-792 |   Error.captureStackTrace(error, notSupported)
-793 |   return error
-794 | }
-          ^
-PostgresError: column "open_order_id" does not exist
- severity_local: "ERROR",
-   severity: "ERROR",
-   position: "64",
-       file: "parse_relation.c",
-    routine: "errorMissingColumn",
-       code: "42703"
-
-      at ErrorResponse (/Users/reinhartsulilatu/Repos/byscript-connector-api/node_modules/postgres/src/errors.js:794:5)
- error query
-updating trade id 56013524607868433 to "waiting_targets"
-trade Data::::: please handle TP/SL null
+updating trade id 56013524660920448 to "waiting_targets"
+trade Data::::: please handle TP/SL {
+  "id": 41,
+  "user_id": 1,
+  "exchange_id": 1,
+  "trade_id": "56013524660920448",
+  "order_id": "56013524660920448",
+  "open_order_id": "56013524660920448",
+  "open_fill_price": null,
+  "open_filled_at": null,
+  "close_order_id": null,
+  "close_filled_at": null,
+  "close_reason": null,
+  "contract": "DOGE_USDT",
+  "position_type": "short",
+  "market_type": "limit",
+  "size": "-1.00000000",
+  "price": "0.13898000",
+  "leverage": 10,
+  "leverage_type": "ISOLATED",
+  "pnl": null,
+  "pnl_margin": null,
+  "status": "open",
+  "position_status": null,
+  "closed_at": null,
+  "reduce_only": false,
+  "take_profit_enabled": true,
+  "take_profit_executed": false,
+  "take_profit_price": "0.13500000",
+  "take_profit_price_type": "mark",
+  "stop_loss_enabled": true,
+  "stop_loss_executed": false,
+  "stop_loss_price": "0.14300000",
+  "stop_loss_price_type": "mark",
+  "metadata": {
+    "id": 56013524660920450,
+    "bbo": "-",
+    "pnl": "0",
+    "tif": "gtc",
+    "left": -1,
+    "mkfr": "0.0002",
+    "refr": "0",
+    "refu": 0,
+    "size": -1,
+    "text": "api",
+    "tkfr": "0.0005",
+    "user": 16778193,
+    "price": "0.13898",
+    "is_liq": false,
+    "status": "open",
+    "stp_id": 0,
+    "iceberg": 0,
+    "stp_act": "-",
+    "biz_info": "dual",
+    "contract": "DOGE_USDT",
+    "is_close": false,
+    "update_id": 1,
+    "amend_text": "-",
+    "fill_price": "0",
+    "pnl_margin": "0",
+    "create_time": 1765654559.909,
+    "update_time": 1765654559.909,
+    "is_reduce_only": false
+  },
+  "is_tpsl": false,
+  "tpsl_type": null,
+  "parent_trade_id": null,
+  "created_at": "2025-12-13T19:36:00.047Z",
+  "updated_at": "2025-12-13T19:36:00.047Z"
+}
+🏓 PING → user=16778193
+🏓 PING → user=16778193
+🏓 PING → user=16778193
 🏓 PING → user=16778193
 🏓 PING → user=16778193
 🏓 PING → user=16778193

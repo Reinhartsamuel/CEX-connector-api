@@ -19,6 +19,7 @@ export const exchanges = pgTable('exchanges', {
   id: serial('id').primaryKey(),
   user_id: integer('user_id').notNull().references(() => users.id, { onDelete: 'cascade' }),
   exchange_title: text('exchange_title').notNull(), // 'gate', 'binance', 'okx', etc.
+  exchange_user_id: text('exchange_user_id').notNull().unique(), // user id on gate, binance, or other exchanges
 
   market_type: text('market_type'), // "futures" | "spot"
   api_key: text('api_key').notNull(),

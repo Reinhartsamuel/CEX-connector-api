@@ -1,0 +1,1 @@
+ALTER TABLE "exchanges" ALTER COLUMN "exchange_user_id" SET NOT NULL;

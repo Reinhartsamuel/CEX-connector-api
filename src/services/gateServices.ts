@@ -455,7 +455,7 @@ export const GateServices = {
     if (!response.ok) {
       const errorText = await response.text();
       throw new Error(
-        `Gate.io API error on getFuturesOrder (${response.status}): ${errorText}`,
+        `Gate.io API error on whitelistedRequest (${response.status}): ${errorText}`,
       );
     }
 
