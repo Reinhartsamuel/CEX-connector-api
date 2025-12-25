@@ -4,6 +4,7 @@ import sseRouter from './routes/sseRoutes'
 import { logger } from 'hono/logger'
 import { client, closeConnection, testConnection } from './db/client'
 import redis from './db/redis'
+import okxRouter from './routes/okxRoutes'
 
 const app = new Hono()
 app.use(logger())
@@ -11,19 +12,21 @@ app.get('/', (c) => {
   return c.text('Hello Hono!')
 })
 app.route('/gate', gateRouter)
+app.route('/okx', okxRouter)
 app.route('/sse', sseRouter)
-
 
 
 
 // Health check endpoint
 app.get('/health', async (c) => {
+  return c.text('ok')
   try {
     // Check PostgreSQL
     await client`SELECT 1`;
 
     // Check Redis
     await redis.ping();
+    console.log(kmsClient,'kmsClient')
 
     return c.json({
       status: 'healthy',

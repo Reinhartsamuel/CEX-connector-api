@@ -8,7 +8,8 @@ import {
 } from "../../schemas/interfaces";
 import {
   closeFuturesPositionSchema,
-  placeFuturesOrdersSchema,
+  gateRegisterUserSchema,
+  gatePlaceFuturesOrdersSchema,
 } from "../../schemas/gateSchemas";
 import * as z from "zod";
 import { getOrderType } from "../../utils/getOrderType";
@@ -17,37 +18,78 @@ import { mapPriceType } from "../../utils/mapPriceType";
 import { set } from "../../utils/cache";
 import Redis from "ioredis";
 import { postgresDb } from "../../db/client";
-import { exchanges, trades } from "../../db/schema";
+import { exchanges, trades, users } from "../../db/schema";
 import { and, eq } from "drizzle-orm";
 import * as JSONbig from "json-bigint";
 import redis from "../../db/redis";
+import {
+  decrypt,
+  generateAndEncryptCredentials,
+  kmsClient,
+} from "../../utils/cryptography/kmsUtils";
+import { DecryptCommand } from "@aws-sdk/client-kms";
 
 export const GateHandler = {
-  unwrapCredentials: async function (
-    exchangeId: number,
-  ): Promise<{ api_key: string; api_secret: string; user_id: number }> {
+  /**
+    Unwraps and decrypts the credentials in both plaintext and encrypted form for a given exchange ID.
+    @returns {
+      api_key: string;
+      api_secret: string;
+      user_id: number;
+      encrypted_api_key: string;
+      encrypted_api_secret: string;
+      encrypted_user_id: string;
+    }
+  */
+  unwrapCredentials: async function (exchangeId: number): Promise<{
+    api_key: string;
+    api_secret: string;
+    user_id: number;
+    encrypted_api_key: string;
+    encrypted_api_secret: string;
+    exchange_user_id: string;
+  }> {
     const exchange = await postgresDb.query.exchanges.findFirst({
       where: eq(exchanges.id, exchangeId),
     });
     if (!exchange) throw new Error("exchange not found");
 
-    // ========= TODO: use Vault/KMS to encrypt and decrypt the credentials ======
-    // code here....
-    //
-    //
-    //
-    //
-    //
+    // ========= use Vault/KMS to encrypt and decrypt the credentials ======
+    const dekResp = await kmsClient.send(
+      new DecryptCommand({
+        CiphertextBlob: exchange.enc_dek!,
+        EncryptionAlgorithm: "SYMMETRIC_DEFAULT",
+      }),
+    );
+    if (!dekResp.Plaintext) throw new Error("KMS decrypt failed");
+
+    const plaintextDEK = Buffer.from(dekResp.Plaintext);
+
+    const decryptedApiKey = decrypt(
+      JSON.parse(exchange.api_key_encrypted),
+      plaintextDEK,
+    );
+    const decryptedApiSecret = decrypt(
+      JSON.parse(exchange.api_secret_encrypted),
+      plaintextDEK,
+    );
+
+    // zero
+    plaintextDEK.fill(0);
+
     return {
-      api_key: exchange.api_key,
-      api_secret: exchange.api_secret,
+      api_key: decryptedApiKey,
+      api_secret: decryptedApiSecret,
       user_id: exchange.user_id,
+      encrypted_api_key: exchange.api_key_encrypted,
+      encrypted_api_secret: exchange.api_secret_encrypted,
+      exchange_user_id: exchange.exchange_user_id,
     };
   },
   futuresOrder: async function (c: Context) {
     try {
       const body = (await c.req.json()) as z.infer<
-        typeof placeFuturesOrdersSchema
+        typeof gatePlaceFuturesOrdersSchema
       >;
       // GateServices.initialize(process.env.GATE_API_KEY!, process.env.GATE_API_SECRET!);
       const api_key = c.req.header("api-key")!;
@@ -401,11 +443,19 @@ export const GateHandler = {
   futuresOrderDb: async function (c: Context) {
     try {
       const body = (await c.req.json()) as z.infer<
-        typeof placeFuturesOrdersSchema
+        typeof gatePlaceFuturesOrdersSchema
       >;
-      const { api_key, api_secret, user_id } =
+      let {
+        api_key,
+        api_secret,
+        user_id,
+        exchange_user_id,
+        encrypted_api_key,
+        encrypted_api_secret } =
         await GateHandler.unwrapCredentials(body.exchange_id);
       GateServices.initialize(api_key, api_secret);
+      api_key = "";
+      api_secret = "";
       const allReturn: { message: string; data: any } = {
         message: "ok",
         data: null,
@@ -455,17 +505,17 @@ export const GateHandler = {
 
       // Store credentials and trigger WebSocket connection
       await redis.hset(
-        `gate:creds:${body.user_id}`,
+        `gate:creds:${exchange_user_id}`,
         "apiKey",
-        api_key,
+        encrypted_api_key,
         "apiSecret",
-        api_secret,
+        encrypted_api_secret,
       );
       await redis.publish(
         "ws-control",
         JSON.stringify({
           op: "open",
-          userId: String(body.user_id),
+          userId: String(exchange_user_id),
           contract: body.contract,
         }),
       );
@@ -487,7 +537,11 @@ export const GateHandler = {
         // directly save current exposure to Redis if
         // order market and successful
         const positionKey = `${resPlaceOrder.contract}:dual_${body.position_type}`;
-        await redis.hset(`user:${resPlaceOrder?.user}:positions`, positionKey, JSON.stringify(resPlaceOrder))
+        await redis.hset(
+          `user:${resPlaceOrder?.user}:positions`,
+          positionKey,
+          JSON.stringify(resPlaceOrder),
+        );
 
         // TRIGGER TP / SL only for market orders
         const payload: GateTriggerPriceOrder = {
@@ -626,6 +680,8 @@ export const GateHandler = {
       return c.json({
         message: "Unexpected Error happened",
       });
+    } finally {
+      GateServices.clearCredentials();
     }
   },
   closePositionDb: async function (c: Context) {
@@ -646,40 +702,39 @@ export const GateHandler = {
         where: and(
           eq(trades.exchange_id, body.exchange_id),
           eq(trades.contract, body.contract),
-          eq(trades.status, 'waiting_targets')
-        )
+          eq(trades.status, "waiting_targets"),
+        ),
       });
 
       const closed_trades = await Promise.all(
         running_trades.map(async (trade) => {
           const orderPayload: GateFuturesOrder = {
             contract: body.contract,
-            size: parseFloat(trade.size) * (-1),
+            size: parseFloat(trade.size) * -1,
             price: "0",
             tif: "ioc",
             iceberg: 0,
-            reduce_only:true,
+            reduce_only: true,
             auto_size: "",
             settle: "usdt",
           };
           const res = await GateServices.placeFuturesOrder(orderPayload);
           if (
-            res?.status === 'finished' &&
-            res?.finish_as === 'filled' &&
+            res?.status === "finished" &&
+            res?.finish_as === "filled" &&
             res?.left === 0
           ) {
             // update status and pnl
-            postgresDb.update(trades)
-              .set({
-                status: 'closed',
-                close_order_id: res.id,
-                pnl:res.pnl,
-                pnl_margin:res.pnl_margin,
-                closed_at: new Date()
-              })
+            postgresDb.update(trades).set({
+              status: "closed",
+              close_order_id: res.id,
+              pnl: res.pnl,
+              pnl_margin: res.pnl_margin,
+              closed_at: new Date(),
+            });
           }
           return res;
-        })
+        }),
       );
 
       return c.json({
@@ -709,6 +764,105 @@ export const GateHandler = {
       );
     }
   },
+  registerUser: async function (c: Context) {
+    try {
+      const body = (await c.req.json()) as z.infer<
+        typeof gateRegisterUserSchema
+      >;
+      const { user_id } = body;
+
+      let api_key: string | undefined = body.api_key;
+      let api_secret: string | undefined = body.api_secret;
+
+      // ---- Validate credentials with Gate BEFORE storing ----
+      GateServices.initialize(api_key, api_secret);
+
+      const futuresAccount = await GateServices.whitelistedRequest({
+        method: "GET",
+        urlPath: "/api/v4/futures/usdt/accounts",
+        queryString: "",
+        payload: undefined,
+      });
+
+      if (futuresAccount.status === "error") {
+        return c.json(futuresAccount, { status: futuresAccount.statusCode });
+      }
+
+      const account = await GateServices.whitelistedRequest({
+        method: "GET",
+        urlPath: "/api/v4/account/detail",
+        queryString: "",
+        payload: undefined,
+      });
+
+      if (account.status === "error") {
+        return c.json(account, { status: account.statusCode });
+      }
+
+      // ---- Encrypt credentials (KMS GenerateDataKey happens here) ----
+      const {
+        encryptedDEK,
+        apiKey: encryptedApiKey,
+        apiSecret: encryptedApiSecret,
+      } = await generateAndEncryptCredentials(api_key, api_secret);
+
+      // Serialize AES payloads for DB
+      const apiKeyCiphertext = JSON.stringify(encryptedApiKey);
+      const apiSecretCiphertext = JSON.stringify(encryptedApiSecret);
+
+      // TODO: DELETE BEFORE PUSHING
+      const dekResp = await kmsClient.send(
+        new DecryptCommand({
+          CiphertextBlob: encryptedDEK,
+          EncryptionAlgorithm: "SYMMETRIC_DEFAULT",
+        }),
+      );
+      if (!dekResp.Plaintext) throw new Error("KMS decrypt failed");
+
+      const plaintextDEK = Buffer.from(dekResp.Plaintext);
+
+      const decryptedApiKey = decrypt(
+        JSON.parse(apiKeyCiphertext),
+        plaintextDEK,
+      );
+
+      // zero
+      plaintextDEK.fill(0);
+
+      // ---- ZERO plaintext ASAP ----
+      api_key = undefined;
+      api_secret = undefined;
+
+      // ---- Persist encrypted data ----
+      const [exchange] = await postgresDb
+        .insert(exchanges)
+        .values({
+          user_id,
+          exchange_title: "gate",
+          exchange_user_id: account.user_id,
+          market_type: "futures",
+
+          api_key_encrypted: apiKeyCiphertext,
+          api_secret_encrypted: apiSecretCiphertext,
+          enc_dek: encryptedDEK, // BYTEA
+        })
+        .returning();
+
+      return c.json({
+        message: "ok",
+        exchange,
+      });
+    } catch (e) {
+      console.error(e, "ERROR REGISTER GATE USER");
+      if (e instanceof Error) {
+        return c.json({ message: "ERROR!", error: e.message }, { status: 500 });
+      }
+      return c.json(
+        { message: "ERROR!", error: "UNKNOWN ERROR" },
+        { status: 500 },
+      );
+    }
+  },
 
   playground: async function (c: Context) {
     try {
@@ -725,9 +879,9 @@ export const GateHandler = {
 
       const res = await GateServices.whitelistedRequest({
         method: body.method,
-        urlPath:body.urlPath,
-        queryString:body.queryString,
-        payload:body.payload
+        urlPath: body.urlPath,
+        queryString: body.queryString,
+        payload: body.payload,
       });
 
       return c.json(res);

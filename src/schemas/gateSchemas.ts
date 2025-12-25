@@ -5,7 +5,7 @@ const takeOrStop = z.object({
   price: z.string(),
   price_type: z.enum(['mark', 'index', 'last']),
 });
-export const placeFuturesOrdersSchema = z.object({
+export const gatePlaceFuturesOrdersSchema = z.object({
   user_id: z.string(),
   exchange_id: z.number(),
   market_type: z.enum(['market', 'limit']),
@@ -26,6 +26,19 @@ export const closeFuturesPositionSchema = z.object({
   exchange_id: z.number()
 });
 
+export const gateRegisterUserSchema = z.object({
+  api_key: z.string(),
+  api_secret: z.string(),
+  user_id: z.number()
+});
+
+
+export const okxRegisterUserSchema = z.object({
+  api_key: z.string(),
+  api_secret: z.string(),
+  api_passphrase: z.string(),
+  user_id: z.number()
+});
 // Add more gate-related schemas here as needed
 // export const otherGateSchema = z.object({
 //   // schema definition

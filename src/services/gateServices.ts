@@ -3,7 +3,7 @@ import {
   GateServiceConfig,
   GateTriggerPriceOrder,
 } from "../schemas/interfaces";
-import { signRequestRest } from "../utils/signRequest";
+import {signRequestRestGate } from "../utils/authentication/signRequestGate";
 import * as z from "zod";
 import { closeFuturesPositionSchema } from "../schemas/gateSchemas";
 import * as JSONbig from "json-bigint";
@@ -13,6 +13,12 @@ export const GateServices = {
     this.config.credentials = {
       key: apiKey!,
       secret: secretKey!,
+    };
+  },
+  clearCredentials: function () {
+    this.config.credentials = {
+      key: '',
+      secret: '',
     };
   },
   config: {
@@ -42,7 +48,7 @@ export const GateServices = {
     const payloadStr = JSON.stringify(payload);
 
     // Generate signed headers
-    const headers = signRequestRest(this.config.credentials, {
+    const headers = signRequestRestGate(this.config.credentials, {
       method,
       urlPath,
       queryString,
@@ -64,9 +70,11 @@ export const GateServices = {
 
     if (!response.ok) {
       const errorText = await response.text();
-      throw new Error(
-        `Gate.io API error on updateMarginMode (${response.status}): ${errorText}`,
-      );
+      return {
+        status: "error",
+        message: errorText,
+        statusCode: response.status,
+      };
     }
 
     const responseText = await response.text();
@@ -90,7 +98,7 @@ export const GateServices = {
     const queryString = `leverage=${leverage}`;
 
     // Generate signed headers
-    const headers = signRequestRest(this.config.credentials, {
+    const headers = signRequestRestGate(this.config.credentials, {
       method,
       urlPath,
       queryString,
@@ -113,9 +121,11 @@ export const GateServices = {
 
     if (!response.ok) {
       const errorText = await response.text();
-      throw new Error(
-        `Gate.io API error on updateLeverage (${response.status}): ${errorText}`,
-      );
+      return {
+        status: "error",
+        message: errorText,
+        statusCode: response.status,
+      };
     }
 
     const responseText = await response.text();
@@ -137,7 +147,7 @@ export const GateServices = {
     const payload = "";
 
     // Generate signed headers
-    const headers = signRequestRest(this.config.credentials, {
+    const headers = signRequestRestGate(this.config.credentials, {
       method,
       urlPath,
       queryString,
@@ -158,9 +168,11 @@ export const GateServices = {
 
     if (!response.ok) {
       const errorText = await response.text();
-      throw new Error(
-        `Gate.io API error on getPositions (${response.status}): ${errorText}`,
-      );
+      return {
+        status: "error",
+        message: errorText,
+        statusCode: response.status,
+      };
     }
 
     const responseText = await response.text();
@@ -179,14 +191,12 @@ export const GateServices = {
     const payloadStr = JSON.stringify(payload);
 
     // Generate signed headers
-    const headers = signRequestRest(this.config.credentials, {
+    const headers = signRequestRestGate(this.config.credentials, {
       method,
       urlPath,
       queryString: "",
       payload: payloadStr,
     });
-    console.log(headers, "headers placeorder");
-    console.log(`${this.config.baseUrl}${urlPath}`, "url");
 
     // Make API request
     const response = await fetch(`${this.config.baseUrl}${urlPath}`, {
@@ -200,9 +210,11 @@ export const GateServices = {
 
     if (!response.ok) {
       const errorText = await response.text();
-      throw new Error(
-        `Gate.io API error on placeFuturesOrder (${response.status}): ${errorText}`,
-      );
+      return {
+        status: "error",
+        message: errorText,
+        statusCode: response.status,
+      };
     }
 
     const responseText = await response.text();
@@ -223,7 +235,7 @@ export const GateServices = {
     const payloadStr = JSON.stringify(payload);
 
     // Generate signed headers
-    const headers = signRequestRest(this.config.credentials, {
+    const headers = signRequestRestGate(this.config.credentials, {
       method,
       urlPath,
       queryString: "",
@@ -242,9 +254,11 @@ export const GateServices = {
 
     if (!response.ok) {
       const errorText = await response.text();
-      throw new Error(
-        `Gate.io API error on triggerPriceOrder (${response.status}): ${errorText}`,
-      );
+      return {
+        status: "error",
+        message: errorText,
+        statusCode: response.status,
+      };
     }
 
     const responseText = await response.text();
@@ -285,7 +299,7 @@ export const GateServices = {
       throw new Error("No credentials found. Call initialize first!");
     }
     const urlPath = `/api/v4/futures/usdt/orders/${orderId}`;
-    const headers = signRequestRest(this.config.credentials, {
+    const headers = signRequestRestGate(this.config.credentials, {
       method: "DELETE",
       urlPath: urlPath,
       queryString: "",
@@ -298,7 +312,12 @@ export const GateServices = {
       },
     });
     if (!response.ok) {
-      throw new Error(`Failed to cancel order: ${response.statusText}`);
+      const errorText = await response.text();
+      return {
+        status: "error",
+        message: errorText,
+        statusCode: response.status,
+      };
     }
 
     const responseText = await response.text();
@@ -314,7 +333,7 @@ export const GateServices = {
       throw new Error("No credentials found. Call initialize first!");
     }
     const urlPath = `/api/v4/futures/usdt/price_orders/${orderId}`;
-    const headers = signRequestRest(this.config.credentials, {
+    const headers = signRequestRestGate(this.config.credentials, {
       method: "DELETE",
       urlPath: urlPath,
       queryString: "",
@@ -327,9 +346,12 @@ export const GateServices = {
       },
     });
     if (!response.ok) {
-      throw new Error(
-        `Failed to cancel price trigger order: ${response.statusText}`,
-      );
+      const errorText = await response.text();
+      return {
+        status: "error",
+        message: errorText,
+        statusCode: response.status,
+      };
     }
 
     const responseText = await response.text();
@@ -345,7 +367,7 @@ export const GateServices = {
     }
 
     const urlPath = `/api/v4/futures/usdt/orders/${orderId}`;
-    const headers = signRequestRest(this.config.credentials, {
+    const headers = signRequestRestGate(this.config.credentials, {
       method: "GET",
       urlPath,
       queryString: "",
@@ -359,9 +381,11 @@ export const GateServices = {
     });
     if (!response.ok) {
       const errorText = await response.text();
-      throw new Error(
-        `Gate.io API error on getFuturesOrder (${response.status}): ${errorText}`,
-      );
+      return {
+        status: "error",
+        message: errorText,
+        statusCode: response.status,
+      };
     }
 
     const responseText = await response.text();
@@ -373,7 +397,7 @@ export const GateServices = {
     }
 
     const urlPath = `/api/v4/account/detail`;
-    const headers = signRequestRest(this.config.credentials, {
+    const headers = signRequestRestGate(this.config.credentials, {
       method: "GET",
       urlPath,
       queryString: "",
@@ -387,9 +411,11 @@ export const GateServices = {
     });
     if (!response.ok) {
       const errorText = await response.text();
-      throw new Error(
-        `Gate.io API error on getFuturesOrder (${response.status}): ${errorText}`,
-      );
+      return {
+        status: "error",
+        message: errorText,
+        statusCode: response.status,
+      };
     }
 
     const responseText = await response.text();
@@ -401,7 +427,7 @@ export const GateServices = {
     }
 
     const urlPath = `/api/v4/account/main_keys`;
-    const headers = signRequestRest(this.config.credentials, {
+    const headers = signRequestRestGate(this.config.credentials, {
       method: "GET",
       urlPath,
       queryString: "",
@@ -415,9 +441,11 @@ export const GateServices = {
     });
     if (!response.ok) {
       const errorText = await response.text();
-      throw new Error(
-        `Gate.io API error on getFuturesOrder (${response.status}): ${errorText}`,
-      );
+      return {
+        status: "error",
+        message: errorText,
+        statusCode: response.status,
+      };
     }
 
     const responseText = await response.text();
@@ -438,11 +466,11 @@ export const GateServices = {
       throw new Error("No credentials found. Call initialize first!");
     }
 
-    const headers = signRequestRest(this.config.credentials, {
+    const headers = signRequestRestGate(this.config.credentials, {
       method,
       urlPath,
       queryString,
-      payload: payload ? JSON.stringify(payload) : ""
+      payload: payload ? JSON.stringify(payload) : "",
     });
     const response = await fetch(this.config.baseUrl + urlPath, {
       method,
@@ -450,13 +478,15 @@ export const GateServices = {
         "Content-Type": "application/json",
         ...headers,
       },
-      body: payload ? JSON.stringify(payload) : ""
+      body: payload ? JSON.stringify(payload) : "",
     });
     if (!response.ok) {
       const errorText = await response.text();
-      throw new Error(
-        `Gate.io API error on whitelistedRequest (${response.status}): ${errorText}`,
-      );
+      return {
+        status: "error",
+        message: errorText,
+        statusCode: response.status,
+      };
     }
 
     const responseText = await response.text();

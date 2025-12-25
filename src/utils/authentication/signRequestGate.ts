@@ -1,5 +1,5 @@
 import * as crypto from 'crypto';
-import { GateCredentials, SignRequestOptions, WebSocketAuthOptions } from '../schemas/interfaces';
+import { GateCredentials, SignRequestOptions, WebSocketAuthOptions } from '../../schemas/interfaces';
 
 
 
@@ -7,7 +7,7 @@ import { GateCredentials, SignRequestOptions, WebSocketAuthOptions } from '../sc
  * Generates the required headers for a Gate.io APIv4 signed request
  * Replicates the Go implementation for consistency
  */
-export function signRequestRest(
+export function signRequestRestGate(
   credentials: GateCredentials,
   options: SignRequestOptions
 ): Record<string, string> {

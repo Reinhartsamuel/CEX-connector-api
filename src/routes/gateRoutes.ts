@@ -1,28 +1,29 @@
 import { Context, Hono } from "hono";
-import { GateHandler } from "../handlers/gate/gate_handler";
+
 import { zValidator } from "@hono/zod-validator";
 import { validationErrorHandler } from "../middleware/validationErrorHandler";
-import { placeFuturesOrdersSchema } from "../schemas/gateSchemas";
+import { gateRegisterUserSchema, gatePlaceFuturesOrdersSchema } from "../schemas/gateSchemas";
 import { postgresDb } from "../db/client";
 import { exchanges, trades } from "../db/schema";
 import { and, eq } from "drizzle-orm";
 import redis from "../db/redis";
+import { GateHandler } from "../handlers/gate/gateHandler";
 
 const gateRouter = new Hono();
 
 gateRouter.post(
   "/place-futures-order",
-  zValidator("json", placeFuturesOrdersSchema, validationErrorHandler),
+  zValidator("json", gatePlaceFuturesOrdersSchema, validationErrorHandler),
   GateHandler.futuresOrder,
 );
 gateRouter.post(
   "/place-futures-order-x",
-  zValidator("json", placeFuturesOrdersSchema, validationErrorHandler),
+  zValidator("json", gatePlaceFuturesOrdersSchema, validationErrorHandler),
   GateHandler.futuresOrderDb,
 );
 gateRouter.post("/close-futures-order-x", GateHandler.closePositionDb);
 
-gateRouter.post("/register-user", GateHandler.closePositionDb);
+gateRouter.post("/register-user",zValidator("json", gateRegisterUserSchema, validationErrorHandler), GateHandler.registerUser);
 // gateRouter.post(
 //   "/close-futures-order",
 //   GateHandler.closePosition,

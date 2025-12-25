@@ -58,3 +58,34 @@ export interface WebSocketMessage {
   payload?: any[];
   auth?: Record<string, string>;
 }
+
+export interface OkxOrder {
+  instId: string;
+  tdMode: string;
+  clOrdId?: string;
+  tag?: string;
+  side: string;
+  posSide: string;
+  ordType: string;
+  sz: string;
+  px?: string;
+  reduceOnly: false;
+  attachAlgoOrds?: Array<any>;
+}
+
+
+export interface OkxCredentials {
+  key: string;
+  secret: string;
+  passphrase: string;
+}
+export interface OkxServiceConfig {
+  credentials: OkxCredentials;
+  baseUrl: string;
+}
+
+export interface OkxSignRequestOptions {
+  method: string;
+  requestPath: string; // e.g., '/api/v5/account/balance?ccy=BTC'
+  body?: any; // JSON string of request body (empty for GET requests)
+}

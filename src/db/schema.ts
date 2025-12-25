@@ -1,5 +1,23 @@
-import { pgTable, serial, boolean, timestamp, text, integer, numeric, jsonb, unique } from 'drizzle-orm/pg-core';
+import { pgTable, serial, boolean, timestamp, text, integer, numeric, jsonb, unique, customType, decimal, index } from 'drizzle-orm/pg-core';
 import { relations } from 'drizzle-orm';
+
+// Define the custom type
+const bytea = customType<{
+  data: Uint8Array;
+  driverData: Buffer;
+}>({
+  dataType() {
+    return 'bytea';
+  },
+  toDriver(value: Uint8Array): Buffer {
+    // Convert Uint8Array to a Node.js Buffer for the database driver
+    return Buffer.from(value);
+  },
+  fromDriver(value: Buffer): Uint8Array {
+    // Convert the Buffer retrieved from the database back to a Uint8Array
+    return new Uint8Array(value);
+  },
+});
 
 // Users table - stores platform users
 export const users = pgTable('users', {
@@ -19,11 +37,13 @@ export const exchanges = pgTable('exchanges', {
   id: serial('id').primaryKey(),
   user_id: integer('user_id').notNull().references(() => users.id, { onDelete: 'cascade' }),
   exchange_title: text('exchange_title').notNull(), // 'gate', 'binance', 'okx', etc.
-  exchange_user_id: text('exchange_user_id').notNull().unique(), // user id on gate, binance, or other exchanges
+  exchange_user_id: text('exchange_user_id').notNull().unique(), // user id on gate, okx, or other exchanges
 
   market_type: text('market_type'), // "futures" | "spot"
-  api_key: text('api_key').notNull(),
-  api_secret: text('api_secret').notNull(),
+  api_key_encrypted: text('api_key_encrypted').notNull(),
+  api_secret_encrypted: text('api_secret_encrypted').notNull(),
+  api_passphrase_encrypted: text('api_passphrase_encrypted'), // for OKX API keys needs passphrase
+  enc_dek: bytea('enc_dek'),
   is_active: boolean('is_active').default(true),
   testnet: boolean('testnet').default(false),
   created_at: timestamp('created_at', { withTimezone: true }).defaultNow(),
@@ -39,6 +59,135 @@ export const exchanges = pgTable('exchanges', {
     unique_user_exchange: unique().on(table.user_id, table.exchange_title),
   };
 });
+
+export const autotraders = pgTable('autotraders', {
+  id: serial('id').primaryKey(),
+  user_id: integer('user_id').notNull().references(() => users.id, { onDelete: 'cascade' }),
+  exchange_id: integer('exchange_id').notNull().references(() => exchanges.id, { onDelete: 'cascade' }),
+  trading_plan_id: integer('trading_plan_id').references(() => trading_plans.id, { onDelete: 'cascade' }),
+  market: text('market').notNull(),
+  market_code: text('market_code'),
+  pair: text('pair'), // BTC-USDT / DOGE_USDT_SWAP => this is following exchange's rules
+  status:text('status'),
+  created_at: timestamp('created_at', { withTimezone: true }).defaultNow(),
+  updated_at: timestamp('updated_at', { withTimezone: true }).defaultNow(),
+  initial_investment: decimal('initial_investment', { precision: 10, scale: 2 }).notNull(),
+  symbol: text('symbol').notNull(),
+  position_mode: text('position_mode').notNull(),
+  margin_mode: text('margin_mode').notNull(),
+  leverage:integer('leverage').notNull(),
+  leverage_type: text('leverage_type'),
+  autocompound:boolean('autocompound').default(false),
+  current_balance: decimal('current_balance', { precision: 10, scale: 2 }).notNull(),
+}, (table) => {
+  return {
+    unique_user_exchange_plan_symbol: unique().on(table.user_id, table.exchange_id, table.trading_plan_id, table.symbol),
+    idx_trading_plan_symbol_status: index().on(table.trading_plan_id, table.symbol, table.status),
+    idx_user_id: index().on(table.user_id),
+    idx_exchange_id: index().on(table.exchange_id),
+  };
+});
+
+export const user_balances_snapshots = pgTable('user_balances_snapshots', {
+  id: serial('id').primaryKey(),
+  user_id: integer('user_id').notNull().references(() => users.id, { onDelete: 'cascade' }),
+  exchange_id: integer('exchange_id').notNull().references(() => exchanges.id, { onDelete: 'cascade' }),
+  balance: decimal('balance', { precision: 10, scale: 2 }).notNull(),
+  currency: text('currency').notNull(),
+  created_at: timestamp('created_at', { withTimezone: true }).defaultNow(),
+  updated_at: timestamp('updated_at', { withTimezone: true }).defaultNow(),
+});
+
+export const user_autotrader_balance_snapshots = pgTable('user_autotrader_balance_snapshots', {
+  id: serial('id').primaryKey(),
+  user_id: integer('user_id').notNull().references(() => users.id, { onDelete: 'cascade' }),
+  exchange_id: integer('exchange_id').notNull().references(() => exchanges.id, { onDelete: 'cascade' }),
+  autotrader_id: integer('autotrader_id').notNull().references(() => autotraders.id, { onDelete: 'cascade' }),
+  balance: decimal('balance', { precision: 10, scale: 2 }).notNull(),
+  currency: text('currency').notNull(),
+  created_at: timestamp('created_at', { withTimezone: true }).defaultNow(),
+  updated_at: timestamp('updated_at', { withTimezone: true }).defaultNow(),
+});
+
+export const user_pnl_snapshots = pgTable('user_pnl_snapshots', {
+  id: serial('id').primaryKey(),
+  user_id: integer('user_id').notNull().references(() => users.id, { onDelete: 'cascade' }),
+  exchange_id: integer('exchange_id').notNull().references(() => exchanges.id, { onDelete: 'cascade' }),
+  pnl: decimal('pnl', { precision: 10, scale: 2 }).notNull(),
+  currency: text('currency').notNull(),
+  created_at: timestamp('created_at', { withTimezone: true }).defaultNow(),
+});
+
+export const trading_plans = pgTable('trading_plans', {
+  id: serial('id').primaryKey(),
+  owner_user_id: integer('owner_user_id').notNull().references(() => users.id, { onDelete: 'cascade' }),
+  name: text('name').notNull(),
+  description: text('description').notNull(),
+  strategy: text('strategy').notNull(),
+  parameters: jsonb('parameters').notNull(),
+  visibility: text('visibility').notNull(),  // -- PRIVATE / UNLISTED / PUBLIC
+  total_followers: integer('total_followers').default(0),
+  pnl_30d: decimal('pnl_30d', { precision: 10, scale: 2 }).notNull(),
+  max_dd: decimal('max_dd', { precision: 10, scale: 2 }).notNull(),
+  sharpe: decimal('sharpe', { precision: 10, scale: 2 }).notNull(),
+  created_at: timestamp('created_at', { withTimezone: true }).defaultNow(),
+  is_active: boolean('is_active').notNull().default(false),
+}, (table) => {
+  return {
+    idx_owner_user_id: index().on(table.owner_user_id),
+    idx_visibility: index().on(table.visibility),
+    idx_is_active: index().on(table.is_active),
+  };
+});
+
+export const trading_plan_pairs = pgTable('trading_plan_pairs', {
+  id: serial('id').primaryKey(),
+  trading_plan_id: integer('trading_plan_id').notNull().references(() => trading_plans.id, { onDelete: 'cascade' }),
+  base_asset: text('base_asset').notNull(),
+  quote_asset: text('quote_asset').notNull(),
+  symbol: text('symbol').notNull(),
+}, (table) => {
+  return {
+    idx_symbol: index().on(table.symbol),
+  };
+});
+
+export const trading_plan_keys = pgTable('trading_plan_keys', {
+  id: serial('id').primaryKey(),
+  trading_plan_id: integer('trading_plan_id').notNull().references(() => trading_plans.id, { onDelete: 'cascade' }),
+  hashed_secret: text('hashed_secret').notNull(),
+  is_active: boolean('is_active').notNull().default(false),
+  rate_limit: integer('rate_limit').notNull().default(100),
+  created_at: timestamp('created_at', { withTimezone: true }).defaultNow(),
+}, (table) => {
+  return {
+    idx_trading_plan_id: index().on(table.trading_plan_id),
+    idx_is_active: index().on(table.is_active),
+  };
+});
+
+export const products = pgTable('products', {
+  id : serial('id').primaryKey(),
+  product_name : text('product_name').notNull(),
+  product_description : text('product_description').notNull(),
+  product_attributes : text('product_attributes').notNull(),
+  price : integer('price').notNull(),
+  duration : integer('duration').notNull(),
+})
+
+export const payments = pgTable('payments', {
+  id : serial('id').primaryKey(),
+  user_id : integer('user_id').notNull().references(() => users.id, { onDelete: 'cascade' }),
+  product_id : integer('product_id').notNull().references(() => products.id, { onDelete: 'cascade' }),
+  payment_status : text('payment_status').notNull(),
+  created_at : timestamp('created_at', { withTimezone: true }).defaultNow(),
+  updated_at : timestamp('updated_at', { withTimezone: true }).defaultNow(),
+  paid_at : timestamp('paid_at', { withTimezone: true }),
+  amount : integer('amount').notNull(),
+  affiliate_user_id : integer('affiliate_user_id').references(() => users.id, { onDelete: 'cascade' }),
+  firebase_uid : text('firebase_uid').notNull(),
+  metadata : jsonb('metadata').notNull(),
+})
 
 // Webhooks table - tracks all webhook trigger events
 export const webhooks = pgTable('webhooks', {
@@ -58,6 +207,9 @@ export const trades = pgTable('trades', {
   id: serial('id').primaryKey(),
   user_id: integer('user_id').notNull().references(() => users.id, { onDelete: 'cascade' }),
   exchange_id: integer('exchange_id').notNull().references(() => exchanges.id, { onDelete: 'cascade' }),
+  autotrader_id: integer('autotrader_id').notNull().references(() => autotraders.id, { onDelete: 'cascade' }),
+
+
   trade_id: text('trade_id').notNull(), // Exchange-provided trade ID
   order_id: text('order_id').notNull(), // Exchange-provided trade ID
   open_order_id: text('open_order_id').notNull(), // Exchange-provided trade ID

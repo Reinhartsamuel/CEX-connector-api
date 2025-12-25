@@ -9,6 +9,7 @@
     "db:migrate": "drizzle-kit migrate"
   },
   "dependencies": {
+    "@aws-sdk/client-kms": "^3.956.0",
     "@hono/zod-validator": "^0.7.4",
     "drizzle-orm": "^0.44.7",
     "hono": "^4.10.4",

@@ -1,6 +1,6 @@
 import { test, expect } from "bun:test";
-import { signRequestRest } from './signRequest';
 import { GateCredentials } from "../schemas/interfaces";
+import { signRequestRestGate } from "./authentication/signRequestGate";
 
 const mockCredentials: GateCredentials = {
   key: 'test-api-key',
@@ -15,7 +15,7 @@ const mockOptions = {
 };
 
 test('should generate headers with correct structure', () => {
-  const headers = signRequestRest(mockCredentials, mockOptions);
+  const headers = signRequestRestGate(mockCredentials, mockOptions);
 
   expect(headers).toHaveProperty('KEY');
   expect(headers).toHaveProperty('Timestamp');
@@ -31,8 +31,8 @@ test('should generate different signatures for different payloads', () => {
   const options1 = { ...mockOptions, payload: 'payload1' };
   const options2 = { ...mockOptions, payload: 'payload2' };
 
-  const headers1 = signRequestRest(mockCredentials, options1);
-  const headers2 = signRequestRest(mockCredentials, options2);
+  const headers1 = signRequestRestGate(mockCredentials, options1);
+  const headers2 = signRequestRestGate(mockCredentials, options2);
 
   expect(headers1.SIGN).not.toBe(headers2.SIGN);
 });
@@ -41,15 +41,15 @@ test('should generate different signatures for different secrets', () => {
   const credentials1 = { ...mockCredentials, secret: 'secret1' };
   const credentials2 = { ...mockCredentials, secret: 'secret2' };
 
-  const headers1 = signRequestRest(credentials1, mockOptions);
-  const headers2 = signRequestRest(credentials2, mockOptions);
+  const headers1 = signRequestRestGate(credentials1, mockOptions);
+  const headers2 = signRequestRestGate(credentials2, mockOptions);
 
   expect(headers1.SIGN).not.toBe(headers2.SIGN);
 });
 
 test('should include timestamp in reasonable range', () => {
   const before = Math.floor(Date.now() / 1000);
-  const headers = signRequestRest(mockCredentials, mockOptions);
+  const headers = signRequestRestGate(mockCredentials, mockOptions);
   const after = Math.floor(Date.now() / 1000);
 
   const timestamp = parseInt(headers.Timestamp);
@@ -59,7 +59,7 @@ test('should include timestamp in reasonable range', () => {
 
 test('should handle empty query string', () => {
   const options = { ...mockOptions, queryString: '' };
-  const headers = signRequestRest(mockCredentials, options);
+  const headers = signRequestRestGate(mockCredentials, options);
 
   expect(headers).toHaveProperty('SIGN');
   expect(headers.SIGN).toHaveLength(128);
@@ -67,19 +67,19 @@ test('should handle empty query string', () => {
 
 test('should handle empty payload', () => {
   const options = { ...mockOptions, payload: '' };
-  const headers = signRequestRest(mockCredentials, options);
+  const headers = signRequestRestGate(mockCredentials, options);
 
   expect(headers).toHaveProperty('SIGN');
   expect(headers.SIGN).toHaveLength(128);
 });
 
 test('should generate different signatures for different timestamps', async () => {
-  const headers1 = signRequestRest(mockCredentials, mockOptions);
+  const headers1 = signRequestRestGate(mockCredentials, mockOptions);
 
   // Wait a moment to ensure timestamp would be different
   await Bun.sleep(1000);
 
-  const headers2 = signRequestRest(mockCredentials, mockOptions);
+  const headers2 = signRequestRestGate(mockCredentials, mockOptions);
 
   // Signatures should be different due to timestamp
   expect(headers1.SIGN).not.toBe(headers2.SIGN);

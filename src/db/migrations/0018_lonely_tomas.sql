@@ -1,0 +1,1 @@
+ALTER TABLE "exchanges" RENAME COLUMN "api_key_ecrypted" TO "api_key_encrypted";
