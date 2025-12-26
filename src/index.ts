@@ -106,6 +106,7 @@ async function startApp() {
   console.log(`🚀 Server starting on port ${port}`);
 
   Bun.serve({
+    hostname: "0.0.0.0",
     port,
     fetch: app.fetch,
   });
