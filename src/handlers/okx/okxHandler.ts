@@ -114,6 +114,15 @@ export const OkxHandler = {
         side: "buy",
         posSide: "long", // long or short in futures, on spot not required
         ordType: "market",
+        closeOrderAlgo:[
+                 {
+                     "algoId":"123",
+                     "slTriggerPx":"0.11",
+                     "slTriggerPxType":"mark",
+                     "tpTriggerPx":"0.14",
+                     "tpTriggerPxType":"mark",
+                     "closeFraction":"1"
+                 },],
         sz: "0.01",
         px: "123",
         reduceOnly: false,

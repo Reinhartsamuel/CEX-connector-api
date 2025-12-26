@@ -85,7 +85,10 @@ export const OkxServices = {
         ...headers,
       },
       body: payload ? JSON.stringify(payload) : "",
-      verbose:true
+      verbose:true,
+      tls: {
+            rejectUnauthorized: false,
+          },
     });
     if (!response.ok) {
       const errorText = await response.text();
