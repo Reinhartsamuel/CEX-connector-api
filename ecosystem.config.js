@@ -4,7 +4,7 @@ module.exports = {
       name: "api",
       script: "src/index.ts",
       interpreter: "bun",
-      cwd: "/var/www/api/CEX-connector-api",
+      cwd: "/home/ec2-user/CEX-connector-api",
       env_file: "/home/ec2-user/CEX-connector-api/.env",
       autorestart: true,
       max_restarts: 5,
