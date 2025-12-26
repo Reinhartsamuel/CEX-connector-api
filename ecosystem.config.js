@@ -5,7 +5,7 @@ module.exports = {
       script: "src/index.ts",
       interpreter: "bun",
       cwd: "/var/www/api/CEX-connector-api",
-      env_file: ".env",
+      env_file: "/home/ec2-user/CEX-connector-api/.env",
       autorestart: true,
       max_restarts: 5,
       watch: false,
