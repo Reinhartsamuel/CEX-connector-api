@@ -113,7 +113,10 @@ export const OkxHandler = {
         payload: {posMode: 'long_short_mode', net_mode:'net'},
       });
 
-      allReturn.data.resSetPositionMode = resSetPositionMode;
+      allReturn.data = {
+        ...allReturn.data,
+        resSetPositionMode
+      };
 
       const payload: OkxOrder = {
         instId: "DOGE-USDT-SWAP",
@@ -130,9 +133,11 @@ export const OkxHandler = {
         // ...(body.closeOrderAlgo && body.closeOrderAlgo.length > 0 && { closeOrderAlgo: body.closeOrderAlgo }),
       };
       const resPlaceOrder = await OkxServices.placeOrder(payload);
-
       console.log(resPlaceOrder, "resPlaceOrder");
-      allReturn.data.resPlaceOrder = resPlaceOrder;
+      allReturn.data = {
+        ...allReturn.data,
+        resPlaceOrder
+      };
 
       // Store credentials and trigger WebSocket connection
       // await redis.hset(
