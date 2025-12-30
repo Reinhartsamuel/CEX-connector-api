@@ -9,6 +9,7 @@ import {
 } from "../../schemas/interfaces";
 import {
   closeFuturesPositionSchema,
+  gatePlaceFuturesOrdersSchema,
   gateRegisterUserSchema,
   okxRegisterUserSchema,
 } from "../../schemas/gateSchemas";
@@ -230,11 +231,10 @@ export const OkxHandler = {
 
   order: async function (c: Context) {
     try {
-      const body = await c.req.json();
-      // as z.infer<
-      //   typeof okxOrderSchema
-      //
-      // >;
+      console.log('trying read body')
+
+      const body = await c.req.json() as z.infer<
+        typeof gatePlaceFuturesOrdersSchema>;
       const {
         api_key,
         api_secret,
@@ -260,38 +260,46 @@ export const OkxHandler = {
         }),
       });
 
-      const reqAccount = await OkxServices.whitelistedRequest({
-        method: "GET",
-        requestPath: "/api/v5/account/config",
-        payloadString: undefined
-      });
-
       allReturn.data = {
         ...allReturn.data,
         resSetPositionMode,
-        reqAccount
       };
 
-      // const payload: OkxOrder = {
-      //   instId: "DOGE-USDT-SWAP",
-      //   tdMode: "isolated",
-      //   clOrdId: "random", //mirip text di gate
-      //   tag: "", //mirip text di gate juga
-      //   side: "buy",
-      //   posSide: "long", // long or short in futures, on spot not required
-      //   ordType: "market",
-      //   sz: "0.01",
-      //   reduceOnly: false,
-      //   // ...(body.px && { px: body.px }),
-      //   // ...(body.attachAlgoOrds && body.attachAlgoOrds.length > 0 && { attachAlgoOrds: body.attachAlgoOrds }),
-      //   // ...(body.closeOrderAlgo && body.closeOrderAlgo.length > 0 && { closeOrderAlgo: body.closeOrderAlgo }),
-      // };
-      // const resPlaceOrder = await OkxServices.placeOrder(payload);
-      // console.log(resPlaceOrder, "resPlaceOrder");
-      // allReturn.data = {
-      //   ...allReturn.data,
-      //   resPlaceOrder,
-      // };
+      const payload: OkxOrder = {
+        instId: body.contract,
+        tdMode: body.leverage_type,
+        clOrdId: "", //mirip text di gate
+        tag: "", //mirip text di gate juga
+        side: body.position_type === 'long' ? 'buy' : 'sell',
+        posSide: body.position_type, // long or short in futures, on spot not required
+        ordType: body.market_type,
+        sz: String(body.size),
+        reduceOnly: body.reduce_only,
+        ...(body?.price && { price: String(body.price) }),
+       ...((body?.take_profit.enabled || body?.stop_loss.enabled) && {
+         attachAlgoOrds: [
+           {
+             tpTriggerRatio: body.position_type === 'long' ? '1' : '-1',
+             tpOrdPx: body.take_profit.price,
+             tpOrdKind: 'limit',
+             tpTriggerPxType:body.take_profit.price_type,
+
+             slTriggerRatio: body.position_type === 'long' ? '0' : '1',
+             slOrdPx:body.stop_loss.price,
+             slTriggerPxType:body.stop_loss.price_type,
+           }
+         ]
+       })
+        // ...(body.attachAlgoOrds && body.attachAlgoOrds.length > 0 && { attachAlgoOrds: body.attachAlgoOrds }),
+        // ...(body.closeOrderAlgo && body.closeOrderAlgo.length > 0 && { closeOrderAlgo: body.closeOrderAlgo }),
+      };
+
+      const resPlaceOrder = await OkxServices.placeOrder(payload);
+      console.log(resPlaceOrder, "resPlaceOrder");
+      allReturn.data = {
+        ...allReturn.data,
+        resPlaceOrder,
+      };
 
       // Store credentials and trigger WebSocket connection
       // await redis.hset(
