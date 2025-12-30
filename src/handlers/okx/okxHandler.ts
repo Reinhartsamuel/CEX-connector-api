@@ -231,8 +231,6 @@ export const OkxHandler = {
 
   order: async function (c: Context) {
     try {
-      console.log('trying read body')
-
       const body = await c.req.json() as z.infer<
         typeof gatePlaceFuturesOrdersSchema>;
       const {
@@ -253,16 +251,23 @@ export const OkxHandler = {
         method: "POST",
         requestPath: "/api/v5/account/set-position-mode",
         payloadString: JSON.stringify({
-          instId: "DOGE-USDT-SWAP",
-          lever: "5",
-          mgnMode: "cross",
+          instId: body.contract,
+          lever: body.leverage,
+          mgnMode: body.leverage_type,
           posMode:"long_short_mode"
         }),
+      });
+
+      const reqAccount = await OkxServices.whitelistedRequest({
+        method: "GET",
+        requestPath: "/api/v5/account/config",
+        payloadString: undefined
       });
 
       allReturn.data = {
         ...allReturn.data,
         resSetPositionMode,
+        reqAccount
       };
 
       const payload: OkxOrder = {
