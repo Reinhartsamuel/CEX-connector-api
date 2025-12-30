@@ -278,6 +278,7 @@ export const OkxHandler = {
         side: body.position_type === 'long' ? 'buy' : 'sell',
         posSide: body.position_type, // long or short in futures, on spot not required
         ordType: body.market_type,
+        px: body.price ? String(body.price) : '',
         sz: String(body.size),
         reduceOnly: body.reduce_only,
         ...(body?.price && { price: String(body.price) }),
