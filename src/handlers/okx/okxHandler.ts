@@ -300,8 +300,9 @@ export const OkxHandler = {
         // ...(body.closeOrderAlgo && body.closeOrderAlgo.length > 0 && { closeOrderAlgo: body.closeOrderAlgo }),
       };
 
+      console.log(payload,'payload order okx')
+
       const resPlaceOrder = await OkxServices.placeOrder(payload);
-      console.log(resPlaceOrder, "resPlaceOrder");
       allReturn.data = {
         ...allReturn.data,
         resPlaceOrder,
