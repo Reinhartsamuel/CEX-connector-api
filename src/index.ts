@@ -19,30 +19,22 @@ app.route('/sse', sseRouter)
 
 // Health check endpoint
 app.get('/health', async (c) => {
-  return c.text('ok')
-  try {
-    // Check PostgreSQL
-    await client`SELECT 1`;
+  const start = performance.now();
 
-    // Check Redis
-    await redis.ping();
-    console.log(kmsClient,'kmsClient')
+  await client`SELECT 1`;
+  const dbEnd = performance.now();
 
-    return c.json({
-      status: 'healthy',
-      postgres: 'connected',
-      redis: 'connected',
-      timestamp: new Date().toISOString()
-    });
-  } catch (error: any) {
-    console.error('Health check failed:', error);
-    return c.json({
-      status: 'unhealthy',
-      postgres: 'error',
-      redis: 'error',
-      error: error.message
-    }, 503);
-  }
+  await redis.ping();
+  const redisEnd = performance.now();
+
+  return c.json({
+    status: 'healthy',
+    metrics: {
+      db_ms: (dbEnd - start).toFixed(2),
+      redis_ms: (redisEnd - dbEnd).toFixed(2),
+      total_ms: (performance.now() - start).toFixed(2)
+    }
+  });
 });
 
 const port = parseInt(process.env['PORT'] || '1122')
