@@ -11,7 +11,6 @@ import {
   closeFuturesPositionSchema,
   gateRegisterUserSchema,
   okxRegisterUserSchema,
-
 } from "../../schemas/gateSchemas";
 import * as z from "zod";
 import { getOrderType } from "../../utils/getOrderType";
@@ -25,7 +24,11 @@ import { and, eq } from "drizzle-orm";
 import * as JSONbig from "json-bigint";
 import redis from "../../db/redis";
 import { OkxServices } from "../../services/okxServices";
-import { decrypt, generateAndEncryptCredentials, kmsClient } from "../../utils/cryptography/kmsUtils";
+import {
+  decrypt,
+  generateAndEncryptCredentials,
+  kmsClient,
+} from "../../utils/cryptography/kmsUtils";
 import { DecryptCommand } from "@aws-sdk/client-kms";
 
 export const OkxHandler = {
@@ -110,7 +113,7 @@ export const OkxHandler = {
         return c.json(
           {
             message: "ERROR!",
-            error:  `exchange already registered for 'okx' user_id ${user_id} with exchange id ${existing.id}`
+            error: `exchange already registered for 'okx' user_id ${user_id} with exchange id ${existing.id}`,
           },
           { status: 400 },
         );
@@ -161,8 +164,12 @@ export const OkxHandler = {
         encryptedDEK,
         apiKey: encryptedApiKey,
         apiSecret: encryptedApiSecret,
-        passphrase
-      } = await generateAndEncryptCredentials(api_key, api_secret, api_passphrase);
+        passphrase,
+      } = await generateAndEncryptCredentials(
+        api_key,
+        api_secret,
+        api_passphrase,
+      );
 
       // Serialize AES payloads for DB
       const apiKeyCiphertext = JSON.stringify(encryptedApiKey);
@@ -185,10 +192,10 @@ export const OkxHandler = {
           exchange_title: "okx",
           exchange_user_id: account.uid,
           market_type: "futures",
-          api_key_encrypted:apiKeyCiphertext,
-          api_secret_encrypted:apiSecretCiphertext,
-          api_passphrase_encrypted:passphraseCiphertext,
-          enc_dek:encryptedDEK
+          api_key_encrypted: apiKeyCiphertext,
+          api_secret_encrypted: apiSecretCiphertext,
+          api_passphrase_encrypted: passphraseCiphertext,
+          enc_dek: encryptedDEK,
         })
         .returning({
           exchange_id: exchanges.id,
@@ -198,7 +205,7 @@ export const OkxHandler = {
       return c.json({
         message: "ok",
         account,
-        exchangeRecord
+        exchangeRecord,
       });
     } catch (e) {
       console.error(e, "ERROR 500 REGISTER USER okxServices");
@@ -221,10 +228,9 @@ export const OkxHandler = {
     }
   },
 
-
   order: async function (c: Context) {
     try {
-      const body = (await c.req.json())
+      const body = await c.req.json();
       // as z.infer<
       //   typeof okxOrderSchema
       //
@@ -239,38 +245,40 @@ export const OkxHandler = {
       };
 
       const resSetPositionMode = await OkxServices.whitelistedRequest({
-        method: 'POST',
-        requestPath: '/api/v5/account/set-position-mode',
+        method: "POST",
+        requestPath: "/api/v5/account/set-position-mode",
         payload: {
-          posMode: 'long_short_mode',
+          instId: "DOGE-USDT-SWAP",
+          lever: "5",
+          mgnMode: "cross",
         },
       });
 
       allReturn.data = {
         ...allReturn.data,
-        resSetPositionMode
+        resSetPositionMode,
       };
 
-      const payload: OkxOrder = {
-        instId: "DOGE-USDT-SWAP",
-        tdMode: "isolated",
-        clOrdId: "random", //mirip text di gate
-        tag: "", //mirip text di gate juga
-        side: "buy",
-        posSide: "long", // long or short in futures, on spot not required
-        ordType: "market",
-        sz: "0.01",
-        reduceOnly:false,
-        // ...(body.px && { px: body.px }),
-        // ...(body.attachAlgoOrds && body.attachAlgoOrds.length > 0 && { attachAlgoOrds: body.attachAlgoOrds }),
-        // ...(body.closeOrderAlgo && body.closeOrderAlgo.length > 0 && { closeOrderAlgo: body.closeOrderAlgo }),
-      };
-      const resPlaceOrder = await OkxServices.placeOrder(payload);
-      console.log(resPlaceOrder, "resPlaceOrder");
-      allReturn.data = {
-        ...allReturn.data,
-        resPlaceOrder
-      };
+      // const payload: OkxOrder = {
+      //   instId: "DOGE-USDT-SWAP",
+      //   tdMode: "isolated",
+      //   clOrdId: "random", //mirip text di gate
+      //   tag: "", //mirip text di gate juga
+      //   side: "buy",
+      //   posSide: "long", // long or short in futures, on spot not required
+      //   ordType: "market",
+      //   sz: "0.01",
+      //   reduceOnly: false,
+      //   // ...(body.px && { px: body.px }),
+      //   // ...(body.attachAlgoOrds && body.attachAlgoOrds.length > 0 && { attachAlgoOrds: body.attachAlgoOrds }),
+      //   // ...(body.closeOrderAlgo && body.closeOrderAlgo.length > 0 && { closeOrderAlgo: body.closeOrderAlgo }),
+      // };
+      // const resPlaceOrder = await OkxServices.placeOrder(payload);
+      // console.log(resPlaceOrder, "resPlaceOrder");
+      // allReturn.data = {
+      //   ...allReturn.data,
+      //   resPlaceOrder,
+      // };
 
       // Store credentials and trigger WebSocket connection
       // await redis.hset(
