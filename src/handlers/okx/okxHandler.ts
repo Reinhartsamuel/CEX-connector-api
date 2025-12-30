@@ -122,7 +122,7 @@ export const OkxHandler = {
       const reqAccount = await OkxServices.whitelistedRequest({
         method: "GET",
         requestPath: "/api/v5/account/config",
-        payload: null,
+        payloadString: undefined
       });
       if (reqAccount.status === "error")
         return c.json(
@@ -235,8 +235,13 @@ export const OkxHandler = {
       //   typeof okxOrderSchema
       //
       // >;
-      const { api_key, api_secret, api_passphrase, user_id } =
-        await OkxHandler.unwrapCredentials(body.exchange_id);
+      const {
+        api_key,
+        api_secret,
+        api_passphrase,
+        user_id
+      } = await OkxHandler.unwrapCredentials(body.exchange_id);
+
       OkxServices.initialize(api_key, api_secret, api_passphrase);
 
       const allReturn: { message: string; data: any } = {
@@ -247,11 +252,11 @@ export const OkxHandler = {
       const resSetPositionMode = await OkxServices.whitelistedRequest({
         method: "POST",
         requestPath: "/api/v5/account/set-position-mode",
-        payload: {
+        payloadString: JSON.stringify({
           instId: "DOGE-USDT-SWAP",
           lever: "5",
           mgnMode: "cross",
-        },
+        }),
       });
 
       allReturn.data = {
@@ -409,7 +414,7 @@ export const OkxHandler = {
       const res = await OkxServices.whitelistedRequest({
         method: body.method,
         requestPath: body.requestPath,
-        payload: body.payload,
+        payloadString: body.payload ? JSON.stringify(body.payload) : undefined,
       });
 
       return c.json(res);

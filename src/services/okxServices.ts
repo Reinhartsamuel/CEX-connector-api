@@ -28,7 +28,7 @@ export const OkxServices = {
       {
         method: "POST",
         requestPath: requestPath,
-        body: payload,
+        body: JSON.stringify(payload),
       },
     );
 
@@ -57,11 +57,11 @@ export const OkxServices = {
   whitelistedRequest: async function ({
     method,
     requestPath,
-    payload,
+    payloadString,
   }: {
     method: string;
     requestPath: string;
-    payload: any;
+    payloadString: string | undefined;
   }) {
     console.log(this.config.credentials, 'thisconfigcredentials')
     if (
@@ -76,7 +76,7 @@ export const OkxServices = {
     const headers = signRequestOkx(this.config.credentials, {
       method,
       requestPath,
-      body: payload ? JSON.stringify(payload) : "",
+      body: payloadString ? payloadString : "",
     });
     const response = await fetch(this.config.baseUrl + requestPath, {
       method,
@@ -84,7 +84,7 @@ export const OkxServices = {
         "Content-Type": "application/json",
         ...headers,
       },
-      body: payload ? JSON.stringify(payload) : "",
+      body: payloadString ? payloadString : "",
       verbose:true,
       tls: {
             rejectUnauthorized: false,

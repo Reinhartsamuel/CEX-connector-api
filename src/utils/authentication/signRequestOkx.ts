@@ -50,7 +50,7 @@ export function signRequestOkx(
   const method = options.method.toUpperCase();
 
   // Body raw
-  const body = options?.body ? JSON.stringify(options.body) : '';
+  const body = options?.body ? options.body : '';
 
   // Create pre-hash string: timestamp + method + requestPath + body
   const preHashString = timestamp + method + options.requestPath + body;

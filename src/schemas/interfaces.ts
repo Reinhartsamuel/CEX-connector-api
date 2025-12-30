@@ -88,5 +88,5 @@ export interface OkxServiceConfig {
 export interface OkxSignRequestOptions {
   method: string;
   requestPath: string; // e.g., '/api/v5/account/balance?ccy=BTC'
-  body?: any; // JSON string of request body (empty for GET requests)
+  body?: string | undefined; // JSON string of request body (empty for GET requests)
 }

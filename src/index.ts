@@ -64,8 +64,8 @@ app.get('/health-async', async (c) => {
         note: "Parallel check executed"
       }
     });
-  } catch (error) {
-    return c.json({ status: 'unhealthy', error: error.message }, 503);
+  } catch (error:Error|any) {
+    return c.json({ status: 'unhealthy', error: (error as Error).message }, 503);
   }
 });
 
