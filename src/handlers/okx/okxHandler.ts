@@ -114,24 +114,11 @@ export const OkxHandler = {
         side: "buy",
         posSide: "long", // long or short in futures, on spot not required
         ordType: "market",
-        closeOrderAlgo:[
-                 {
-                     "algoId":"123",
-                     "slTriggerPx":"0.11",
-                     "slTriggerPxType":"mark",
-                     "tpTriggerPx":"0.14",
-                     "tpTriggerPxType":"mark",
-                     "closeFraction":"1"
-                 },],
         sz: "0.01",
-        px: "123",
-        reduceOnly: false,
-        attachAlgoOrds: [{}],
-        // tpTriggerPx: 120, // price for Take Profit
-        // tpOrdKind:'market',
-        // slTriggerPx:100, // price fr Stop Loss
-        // tpTriggerPxType:'mark',
-        // slTriggerPxType:'mark'
+        reduceOnly:false,
+        // ...(body.px && { px: body.px }),
+        // ...(body.attachAlgoOrds && body.attachAlgoOrds.length > 0 && { attachAlgoOrds: body.attachAlgoOrds }),
+        // ...(body.closeOrderAlgo && body.closeOrderAlgo.length > 0 && { closeOrderAlgo: body.closeOrderAlgo }),
       };
       const resPlaceOrder = await OkxServices.placeOrder(payload);
 

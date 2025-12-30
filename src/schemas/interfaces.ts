@@ -69,7 +69,7 @@ export interface OkxOrder {
   ordType: string;
   sz: string;
   px?: string;
-  reduceOnly: false;
+  reduceOnly: boolean;
   attachAlgoOrds?: Array<any>;
   closeOrderAlgo?: Array<any>;
 }
