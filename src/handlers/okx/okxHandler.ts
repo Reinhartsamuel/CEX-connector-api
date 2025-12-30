@@ -260,9 +260,16 @@ export const OkxHandler = {
         }),
       });
 
+      const reqAccount = await OkxServices.whitelistedRequest({
+        method: "GET",
+        requestPath: "/api/v5/account/config",
+        payloadString: undefined
+      });
+
       allReturn.data = {
         ...allReturn.data,
         resSetPositionMode,
+        reqAccount
       };
 
       // const payload: OkxOrder = {
