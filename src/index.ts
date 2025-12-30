@@ -37,6 +37,30 @@ app.get('/health', async (c) => {
   });
 });
 
+app.get('/health-async', async (c) => {
+  const start = performance.now();
+
+  try {
+    // Run both pings simultaneously
+    const [dbResult, redisResult] = await Promise.all([
+      client`SELECT 1`,
+      redis.ping()
+    ]);
+
+    const total_ms = (performance.now() - start).toFixed(2);
+
+    return c.json({
+      status: 'healthy',
+      metrics: {
+        total_ms, // This should drop to ~245ms now
+        note: "Parallel check executed"
+      }
+    });
+  } catch (error) {
+    return c.json({ status: 'unhealthy', error: error.message }, 503);
+  }
+});
+
 const port = parseInt(process.env['PORT'] || '1122')
 // const port = parseInt(process.env.PORT!)
 // console.log(`Server starting on port ${port}`)
