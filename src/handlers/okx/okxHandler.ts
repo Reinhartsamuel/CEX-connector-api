@@ -256,6 +256,7 @@ export const OkxHandler = {
           instId: "DOGE-USDT-SWAP",
           lever: "5",
           mgnMode: "cross",
+          posMode:"long_short_mode"
         }),
       });
 
