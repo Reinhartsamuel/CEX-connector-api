@@ -21,20 +21,25 @@ app.route('/sse', sseRouter)
 app.get('/health', async (c) => {
   const start = performance.now();
 
-  await client`SELECT 1`;
-  const dbEnd = performance.now();
+  try {
+    // Run both pings simultaneously
+    const [dbResult, redisResult] = await Promise.all([
+      client`SELECT 1`,
+      redis.ping()
+    ]);
 
-  await redis.ping();
-  const redisEnd = performance.now();
+    const total_ms = (performance.now() - start).toFixed(2);
 
-  return c.json({
-    status: 'healthy',
-    metrics: {
-      db_ms: (dbEnd - start).toFixed(2),
-      redis_ms: (redisEnd - dbEnd).toFixed(2),
-      total_ms: (performance.now() - start).toFixed(2)
-    }
-  });
+    return c.json({
+      status: 'healthy',
+      metrics: {
+        total_ms, // This should drop to ~245ms now
+        note: "Parallel check executed"
+      }
+    });
+  } catch (error) {
+    return c.json({ status: 'unhealthy', error: error.message }, 503);
+  }
 });
 
 const port = parseInt(process.env['PORT'] || '1122')
