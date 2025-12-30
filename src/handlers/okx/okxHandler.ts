@@ -90,6 +90,137 @@ export const OkxHandler = {
       exchange_user_id: exchange.exchange_user_id,
     };
   },
+  registerUser: async function (c: Context) {
+    try {
+      const body = (await c.req.json()) as z.infer<
+        typeof okxRegisterUserSchema
+      >;
+      const { api_key, api_secret, api_passphrase, user_id } = body;
+
+      OkxServices.initialize(api_key, api_secret, api_passphrase);
+      // find first on exchanges where exchange_title = 'okx' and user_id = user_id
+      const existing = await postgresDb.query.exchanges.findFirst({
+        where: and(
+          eq(exchanges.exchange_title, "okx"),
+          eq(exchanges.user_id, user_id),
+        ),
+      });
+
+      if (existing?.id)
+        return c.json(
+          {
+            message: "ERROR!",
+            error:  `exchange already registered for 'okx' user_id ${user_id} with exchange id ${existing.id}`
+          },
+          { status: 400 },
+        );
+
+      // get account info
+      const reqAccount = await OkxServices.whitelistedRequest({
+        method: "GET",
+        requestPath: "/api/v5/account/config",
+        payload: null,
+      });
+      if (reqAccount.status === "error")
+        return c.json(
+          {
+            ...reqAccount,
+          },
+          { status: reqAccount.statusCode },
+        );
+      const account = reqAccount?.data[0];
+      console.log(account, "account");
+
+      const permissions = account?.perm ? account.perm?.split(",") : [];
+      if (!permissions.includes("trade"))
+        return c.json(
+          {
+            message:
+              "User does not have trade permissions, please create new API KEYS with TRADE permission",
+            permissions,
+            status: "error",
+          },
+          { status: 403 },
+        );
+
+      // const ip = account?.ip ? account.ip?.split(",") : [];
+      // if (!ip.includes("123.232.42.5")) {
+      //   return c.json(
+      //     {
+      //       message:
+      //         "User IP is not whitelisted, please create new API KEYS with IP permission 123.232.42.5",
+      //       ip,
+      //       status: "error",
+      //     },
+      //     { status: 403 },
+      //   );
+      // }
+
+      // ---- Encrypt credentials (KMS GenerateDataKey happens here) ----
+      const {
+        encryptedDEK,
+        apiKey: encryptedApiKey,
+        apiSecret: encryptedApiSecret,
+        passphrase
+      } = await generateAndEncryptCredentials(api_key, api_secret, api_passphrase);
+
+      // Serialize AES payloads for DB
+      const apiKeyCiphertext = JSON.stringify(encryptedApiKey);
+      const apiSecretCiphertext = JSON.stringify(encryptedApiSecret);
+      const passphraseCiphertext = JSON.stringify(passphrase);
+
+      // TODO: DELETE BEFORE PUSHING
+      const dekResp = await kmsClient.send(
+        new DecryptCommand({
+          CiphertextBlob: encryptedDEK,
+          EncryptionAlgorithm: "SYMMETRIC_DEFAULT",
+        }),
+      );
+      if (!dekResp.Plaintext) throw new Error("KMS decrypt failed");
+
+      const exchangeRecord = await postgresDb
+        .insert(exchanges)
+        .values({
+          user_id,
+          exchange_title: "okx",
+          exchange_user_id: account.uid,
+          market_type: "futures",
+          api_key_encrypted:apiKeyCiphertext,
+          api_secret_encrypted:apiSecretCiphertext,
+          api_passphrase_encrypted:passphraseCiphertext,
+          enc_dek:encryptedDEK
+        })
+        .returning({
+          exchange_id: exchanges.id,
+          user: exchanges.user_id,
+        });
+
+      return c.json({
+        message: "ok",
+        account,
+        exchangeRecord
+      });
+    } catch (e) {
+      console.error(e, "ERROR 500 REGISTER USER okxServices");
+      if (e instanceof Error) {
+        return c.json(
+          {
+            message: "ERROR!",
+            error: e.message,
+          },
+          { status: 500 },
+        );
+      }
+      return c.json(
+        {
+          message: "ERROR!",
+          error: "UNKNOWN ERROR",
+        },
+        { status: 500 },
+      );
+    }
+  },
+
 
   order: async function (c: Context) {
     try {
@@ -110,7 +241,9 @@ export const OkxHandler = {
       const resSetPositionMode = await OkxServices.whitelistedRequest({
         method: 'POST',
         requestPath: '/api/v5/account/set-position-mode',
-        payload: {posMode: 'long_short_mode', net_mode:'net'},
+        payload: {
+          posMode: 'long_short_mode',
+        },
       });
 
       allReturn.data = {
@@ -233,136 +366,6 @@ export const OkxHandler = {
       // return c.json(res);
     } catch (e) {
       console.error(e, "ERROR 500 CLOSE POSITION");
-      if (e instanceof Error) {
-        return c.json(
-          {
-            message: "ERROR!",
-            error: e.message,
-          },
-          { status: 500 },
-        );
-      }
-      return c.json(
-        {
-          message: "ERROR!",
-          error: "UNKNOWN ERROR",
-        },
-        { status: 500 },
-      );
-    }
-  },
-  registerUser: async function (c: Context) {
-    try {
-      const body = (await c.req.json()) as z.infer<
-        typeof okxRegisterUserSchema
-      >;
-      const { api_key, api_secret, api_passphrase, user_id } = body;
-
-      OkxServices.initialize(api_key, api_secret, api_passphrase);
-      // find first on exchanges where exchange_title = 'okx' and user_id = user_id
-      const existing = await postgresDb.query.exchanges.findFirst({
-        where: and(
-          eq(exchanges.exchange_title, "okx"),
-          eq(exchanges.user_id, user_id),
-        ),
-      });
-
-      if (existing?.id)
-        return c.json(
-          {
-            message: "ERROR!",
-            error:  `exchange already registered for 'okx' user_id ${user_id} with exchange id ${existing.id}`
-          },
-          { status: 400 },
-        );
-
-      // get account info
-      const reqAccount = await OkxServices.whitelistedRequest({
-        method: "GET",
-        requestPath: "/api/v5/account/config",
-        payload: null,
-      });
-      if (reqAccount.status === "error")
-        return c.json(
-          {
-            ...reqAccount,
-          },
-          { status: reqAccount.statusCode },
-        );
-      const account = reqAccount?.data[0];
-      console.log(account, "account");
-
-      const permissions = account?.perm ? account.perm?.split(",") : [];
-      if (!permissions.includes("trade"))
-        return c.json(
-          {
-            message:
-              "User does not have trade permissions, please create new API KEYS with TRADE permission",
-            permissions,
-            status: "error",
-          },
-          { status: 403 },
-        );
-
-      // const ip = account?.ip ? account.ip?.split(",") : [];
-      // if (!ip.includes("123.232.42.5")) {
-      //   return c.json(
-      //     {
-      //       message:
-      //         "User IP is not whitelisted, please create new API KEYS with IP permission 123.232.42.5",
-      //       ip,
-      //       status: "error",
-      //     },
-      //     { status: 403 },
-      //   );
-      // }
-
-      // ---- Encrypt credentials (KMS GenerateDataKey happens here) ----
-      const {
-        encryptedDEK,
-        apiKey: encryptedApiKey,
-        apiSecret: encryptedApiSecret,
-        passphrase
-      } = await generateAndEncryptCredentials(api_key, api_secret, api_passphrase);
-
-      // Serialize AES payloads for DB
-      const apiKeyCiphertext = JSON.stringify(encryptedApiKey);
-      const apiSecretCiphertext = JSON.stringify(encryptedApiSecret);
-      const passphraseCiphertext = JSON.stringify(passphrase);
-
-      // TODO: DELETE BEFORE PUSHING
-      const dekResp = await kmsClient.send(
-        new DecryptCommand({
-          CiphertextBlob: encryptedDEK,
-          EncryptionAlgorithm: "SYMMETRIC_DEFAULT",
-        }),
-      );
-      if (!dekResp.Plaintext) throw new Error("KMS decrypt failed");
-
-      const exchangeRecord = await postgresDb
-        .insert(exchanges)
-        .values({
-          user_id,
-          exchange_title: "okx",
-          exchange_user_id: account.uid,
-          market_type: "futures",
-          api_key_encrypted:apiKeyCiphertext,
-          api_secret_encrypted:apiSecretCiphertext,
-          api_passphrase_encrypted:passphraseCiphertext,
-          enc_dek:encryptedDEK
-        })
-        .returning({
-          exchange_id: exchanges.id,
-          user: exchanges.user_id,
-        });
-
-      return c.json({
-        message: "ok",
-        account,
-        exchangeRecord
-      });
-    } catch (e) {
-      console.error(e, "ERROR 500 REGISTER USER okxServices");
       if (e instanceof Error) {
         return c.json(
           {
