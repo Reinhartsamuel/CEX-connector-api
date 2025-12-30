@@ -7,7 +7,15 @@ import redis from './db/redis'
 import okxRouter from './routes/okxRoutes'
 
 const app = new Hono()
-app.use(logger())
+app.use('*', async (c, next) => {
+  // If the path is /health, just skip the logger and go to the next middleware
+  if (c.req.path === '/health' || c.req.path === '/health-async') {
+    await next()
+  } else {
+    // Otherwise, use the standard Hono logger
+    await logger()(c, next)
+  }
+})
 app.get('/', (c) => {
   return c.text('Hello Hono!')
 })
