@@ -29,8 +29,8 @@ jobs:
               -o StrictHostKeyChecking=no \
               ${{ secrets.EC2_USER }}@${{ secrets.EC2_HOST }} << 'EOF'
             set -e
-            cd /var/www/api
+            cd /home/ec2-user/CEX-connector-api
             git pull origin main
             bun install
-            pm2 reload ecosystem.config.cjs
+            pm2 restart ecosystem.config.js
           EOF
