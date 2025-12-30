@@ -101,10 +101,19 @@ export const OkxHandler = {
       const { api_key, api_secret, api_passphrase, user_id } =
         await OkxHandler.unwrapCredentials(body.exchange_id);
       OkxServices.initialize(api_key, api_secret, api_passphrase);
+
       const allReturn: { message: string; data: any } = {
         message: "ok",
         data: null,
       };
+
+      const resSetPositionMode = await OkxServices.whitelistedRequest({
+        method: 'POST',
+        requestPath: '/api/v5/account/set-position-mode',
+        payload: {posMode: 'long_short_mode', net_mode:'net'},
+      });
+
+      allReturn.data.resSetPositionMode = resSetPositionMode;
 
       const payload: OkxOrder = {
         instId: "DOGE-USDT-SWAP",
@@ -123,7 +132,7 @@ export const OkxHandler = {
       const resPlaceOrder = await OkxServices.placeOrder(payload);
 
       console.log(resPlaceOrder, "resPlaceOrder");
-      allReturn.data = { resPlaceOrder };
+      allReturn.data.resPlaceOrder = resPlaceOrder;
 
       // Store credentials and trigger WebSocket connection
       // await redis.hset(
