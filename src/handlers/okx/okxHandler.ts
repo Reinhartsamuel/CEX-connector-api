@@ -282,20 +282,25 @@ export const OkxHandler = {
         sz: String(body.size),
         reduceOnly: body.reduce_only,
         ...(body?.price && { price: String(body.price) }),
-       ...((body?.take_profit.enabled || body?.stop_loss.enabled) && {
-         attachAlgoOrds: [
-           {
-             // tpTriggerRatio: body.position_type === 'long' ? '1' : '-1',
-             tpOrdPx: body.take_profit.price,
-             tpOrdKind: 'limit',
-             tpTriggerPxType:body.take_profit.price_type,
 
-             // slTriggerRatio: body.position_type === 'long' ? '0' : '1',
-             slOrdPx:body.stop_loss.price,
-             slTriggerPxType:body.stop_loss.price_type,
-           }
-         ]
-       })
+
+        ...((body?.take_profit.enabled || body?.stop_loss.enabled) && {
+          attachAlgoOrds: [
+            {
+              ...(body?.take_profit?.enabled && {
+                tpTriggerPx: String(body.take_profit.price),
+                tpTriggerPxType: body.take_profit.price_type,
+                tpOrdPx: "-1",        // market when triggered
+              }),
+
+              ...(body?.stop_loss?.enabled && {
+                slTriggerPx: String(body.stop_loss.price),
+                slTriggerPxType: body.stop_loss.price_type,
+                slOrdPx: "-1",        // market when triggered
+              }),
+            },
+          ],
+        }),
         // ...(body.attachAlgoOrds && body.attachAlgoOrds.length > 0 && { attachAlgoOrds: body.attachAlgoOrds }),
         // ...(body.closeOrderAlgo && body.closeOrderAlgo.length > 0 && { closeOrderAlgo: body.closeOrderAlgo }),
       };
