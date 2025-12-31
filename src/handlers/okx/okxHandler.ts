@@ -285,12 +285,12 @@ export const OkxHandler = {
        ...((body?.take_profit.enabled || body?.stop_loss.enabled) && {
          attachAlgoOrds: [
            {
-             tpTriggerRatio: body.position_type === 'long' ? '1' : '-1',
+             // tpTriggerRatio: body.position_type === 'long' ? '1' : '-1',
              tpOrdPx: body.take_profit.price,
              tpOrdKind: 'limit',
              tpTriggerPxType:body.take_profit.price_type,
 
-             slTriggerRatio: body.position_type === 'long' ? '0' : '1',
+             // slTriggerRatio: body.position_type === 'long' ? '0' : '1',
              slOrdPx:body.stop_loss.price,
              slTriggerPxType:body.stop_loss.price_type,
            }
