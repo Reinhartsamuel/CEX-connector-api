@@ -50,7 +50,7 @@ CREATE TABLE "trades" (
 	"metadata" jsonb,
 	"created_at" timestamp with time zone DEFAULT now(),
 	"updated_at" timestamp with time zone DEFAULT now(),
-	CONSTRAINT "trades_exchange_id_trade_id_unique" UNIQUE("exchange_id","trade_id")
+
 );
 --> statement-breakpoint
 CREATE TABLE "users" (

@@ -327,7 +327,7 @@ export const OkxHandler = {
         exchange_id: body.exchange_id,
         trade_id: resPlaceOrder.data[0]?.ordId || '',
         open_order_id: resPlaceOrder.data[0]?.ordId || '',
-
+        autotrader_id:body.autotrader_id,
         order_id: resPlaceOrder.data[0]?.ordId || '',
         contract: body.contract,
         position_type: body.position_type,

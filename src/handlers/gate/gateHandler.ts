@@ -608,6 +608,7 @@ export const GateHandler = {
           exchange_id: body.exchange_id,
           trade_id: resPlaceOrder.id.toString(),
           open_order_id: resPlaceOrder.id.toString(),
+          autotrader_id:body.autotrader_id,
 
           order_id: resPlaceOrder.id.toString(),
           contract: resPlaceOrder.contract,

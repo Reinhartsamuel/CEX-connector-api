@@ -7,6 +7,7 @@ const takeOrStop = z.object({
 });
 export const gatePlaceFuturesOrdersSchema = z.object({
   user_id: z.string(),
+  autotrader_id:z.number(),
   exchange_id: z.number(),
   market_type: z.enum(['market', 'limit']),
   price: z.float64(),

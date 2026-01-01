@@ -5,6 +5,8 @@ import { logger } from 'hono/logger'
 import { client, closeConnection, testConnection } from './db/client'
 import redis from './db/redis'
 import okxRouter from './routes/okxRoutes'
+import autotraderRouter from './routes/autotraderRoutes'
+import tradingPlanRouter from './routes/tradingPlanRoutes'
 
 const app = new Hono()
 app.use('*', async (c, next) => {
@@ -22,6 +24,8 @@ app.get('/', (c) => {
 app.route('/gate', gateRouter)
 app.route('/okx', okxRouter)
 app.route('/sse', sseRouter)
+app.route('/autotraders', autotraderRouter)
+app.route('/trading-plans', tradingPlanRouter)
 
 
 

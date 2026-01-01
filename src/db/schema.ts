@@ -122,14 +122,14 @@ export const trading_plans = pgTable('trading_plans', {
   id: serial('id').primaryKey(),
   owner_user_id: integer('owner_user_id').notNull().references(() => users.id, { onDelete: 'cascade' }),
   name: text('name').notNull(),
-  description: text('description').notNull(),
-  strategy: text('strategy').notNull(),
-  parameters: jsonb('parameters').notNull(),
-  visibility: text('visibility').notNull(),  // -- PRIVATE / UNLISTED / PUBLIC
+  description: text('description'),
+  strategy: text('strategy'),
+  parameters: jsonb('parameters'),
+  visibility: text('visibility'),  // -- PRIVATE / UNLISTED / PUBLIC
   total_followers: integer('total_followers').default(0),
-  pnl_30d: decimal('pnl_30d', { precision: 10, scale: 2 }).notNull(),
-  max_dd: decimal('max_dd', { precision: 10, scale: 2 }).notNull(),
-  sharpe: decimal('sharpe', { precision: 10, scale: 2 }).notNull(),
+  pnl_30d: decimal('pnl_30d', { precision: 10, scale: 2 }),
+  max_dd: decimal('max_dd', { precision: 10, scale: 2 }),
+  sharpe: decimal('sharpe', { precision: 10, scale: 2 }),
   created_at: timestamp('created_at', { withTimezone: true }).defaultNow(),
   is_active: boolean('is_active').notNull().default(false),
 }, (table) => {
@@ -398,3 +398,6 @@ export type NewWebhookResponse = typeof webhook_responses.$inferInsert;
 
 export type OrderUpdate = typeof order_updates.$inferSelect;
 export type NewOrderUpdate = typeof order_updates.$inferInsert;
+
+export type Autotrader = typeof autotraders.$inferSelect;
+export type NewAutotrader = typeof autotraders.$inferInsert;
