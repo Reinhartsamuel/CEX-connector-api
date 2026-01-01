@@ -315,7 +315,7 @@ export const OkxHandler = {
         resPlaceOrder,
       };
       const tradeStatus = () => {
-        if (resPlaceOrder.code !== '0') {
+        if (resPlaceOrder.code === '0') {
           return body.market_type === 'market' ? "waiting_targets":
           body.market_type === 'limit' ? 'waiting_position' : 'unknown';
         }
