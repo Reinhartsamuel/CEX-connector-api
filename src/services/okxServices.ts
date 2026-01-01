@@ -1,4 +1,4 @@
-import { OkxOrder, OkxServiceConfig } from "../schemas/interfaces";
+import { OkxCancelOrder, OkxOrder, OkxServiceConfig } from "../schemas/interfaces";
 import { signRequestOkx } from "../utils/authentication/signRequestOkx";
 import * as JSONbig from "json-bigint";
 
@@ -58,6 +58,41 @@ export const OkxServices = {
     return JSONbig.parse(responseText);
   },
 
+  cancelOrder : async function (payload:OkxCancelOrder) {
+    const requestPath = "/api/v5/trade/cancel-order";
+    const headers = signRequestOkx(
+      {
+        key: this.config.credentials.key,
+        secret: this.config.credentials.secret,
+        passphrase: this.config.credentials.passphrase,
+      },
+      {
+        method: "POST",
+        requestPath: requestPath,
+        body: JSON.stringify(payload),
+      },
+    );
+
+    const response = await fetch(this.config.baseUrl + requestPath, {
+      headers: {
+        "Content-Type": "application/json",
+        ...headers,
+      },
+      method: "POST",
+      body: JSON.stringify(payload),
+    });
+
+    if (!response.ok) {
+      const errorText = await response.text();
+      return {
+        status: "error",
+        message: errorText,
+        statusCode: response.status,
+      };
+    }
+    const responseText = await response.text();
+    return JSONbig.parse(responseText);
+  },
 
   whitelistedRequest: async function ({
     method,

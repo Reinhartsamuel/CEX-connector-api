@@ -34,12 +34,7 @@ export const gateRegisterUserSchema = z.object({
 });
 
 
-export const okxRegisterUserSchema = z.object({
-  api_key: z.string(),
-  api_secret: z.string(),
-  api_passphrase: z.string(),
-  user_id: z.number()
-});
+
 // Add more gate-related schemas here as needed
 // export const otherGateSchema = z.object({
 //   // schema definition

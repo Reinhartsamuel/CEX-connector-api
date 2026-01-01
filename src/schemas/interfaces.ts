@@ -73,7 +73,10 @@ export interface OkxOrder {
   attachAlgoOrds?: Array<any>;
   closeOrderAlgo?: Array<any>;
 }
-
+export interface OkxCancelOrder {
+  instId:string;
+  ordId:string;
+}
 
 export interface OkxCredentials {
   key: string;
