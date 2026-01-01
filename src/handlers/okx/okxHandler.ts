@@ -423,28 +423,14 @@ export const OkxHandler = {
       ),
     });
 
-    const results = await Promise.all(foundTrades.map(async (trade) => {
+    const results = await Promise.allSettled(foundTrades.map(async (trade) => {
       return await OkxServices.cancelOrder({
         instId: trade.contract,
         ordId: trade.order_id,
       });
     }));
 
-    console.log(foundTrades,'foundTrades')
     return c.json(results)
-    // // Cancel the order using the provided order ID
-    // const cancelResult = await OkxServices.cancelOrder(body.order_id);
-
-    // if (cancelResult.status === 'success') {
-    //   return c.json({
-    //     message: 'Order canceled successfully',
-    //   });
-    // } else {
-    //   return c.json({
-    //     message: 'Failed to cancel order',
-    //     error: cancelResult.error,
-    //   }, { status: 500 });
-    // }
   },
   closePositionDb: async function (c: Context) {
     try {
