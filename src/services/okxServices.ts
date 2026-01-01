@@ -1,10 +1,8 @@
-import { password } from "bun";
 import { OkxOrder, OkxServiceConfig } from "../schemas/interfaces";
 import { signRequestOkx } from "../utils/authentication/signRequestOkx";
 import * as JSONbig from "json-bigint";
 
 export const OkxServices = {
-
   initialize: function (apiKey: string, secretKey: string, passphrase: string) {
     this.config.credentials = {
       key: apiKey!,
@@ -16,6 +14,13 @@ export const OkxServices = {
     baseUrl: "https://www.okx.com",
   } as OkxServiceConfig,
 
+  clearCredentials: function () {
+    this.config.credentials = {
+      key:'',
+      secret:'',
+      passphrase : ''
+    }
+  },
 
   placeOrder: async function (payload: OkxOrder) {
     const requestPath = "/api/v5/trade/order";
@@ -63,7 +68,6 @@ export const OkxServices = {
     requestPath: string;
     payloadString: string | undefined;
   }) {
-    console.log(this.config.credentials, 'thisconfigcredentials')
     if (
       !this.config.credentials ||
       !this.config.credentials.key ||

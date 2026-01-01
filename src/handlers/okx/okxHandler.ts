@@ -307,10 +307,68 @@ export const OkxHandler = {
 
       console.log(payload,'payload order okx')
 
+
+
       const resPlaceOrder = await OkxServices.placeOrder(payload);
       allReturn.data = {
         ...allReturn.data,
         resPlaceOrder,
+      };
+      const tradeStatus = () => {
+        if (resPlaceOrder.code !== '0') {
+          return body.market_type === 'market' ? "waiting_targets":
+          body.market_type === 'limit' ? 'waiting_position' : 'unknown';
+        }
+        if (resPlaceOrder.code === '1') return 'error';
+      };
+
+      const addData = {
+        user_id: user_id,
+        exchange_id: body.exchange_id,
+        trade_id: resPlaceOrder.data[0]?.ordId || '',
+        open_order_id: resPlaceOrder.data[0]?.ordId || '',
+
+        order_id: resPlaceOrder.data[0]?.ordId || '',
+        contract: body.contract,
+        position_type: body.position_type,
+        market_type: body.market_type,
+        size: resPlaceOrder.size,
+        leverage: body?.leverage || 1,
+        leverage_type: body?.leverage_type || "ISOLATED",
+        status: tradeStatus(),
+        price: body.price,
+        reduce_only: body.reduce_only,
+        is_tpsl: false,
+
+        //take profit:
+        take_profit_enabled: body.take_profit.enabled,
+        take_profit_executed: (body.market_type ==='market' && body.take_profit.enabled && resPlaceOrder.code === '0'),
+        take_profit_price: body.take_profit.enabled
+          ? Number(body.take_profit.price)
+          : 0,
+        take_profit_price_type: body.take_profit.enabled
+          ? body.take_profit.price_type
+          : "",
+
+        //stop loss:
+        stop_loss_enabled: body.stop_loss.enabled,
+        stop_loss_executed: (body.market_type ==='market' && body.stop_loss.enabled && resPlaceOrder.code === '0'),
+        stop_loss_price: body.stop_loss.enabled
+          ? Number(body.stop_loss.price)
+          : 0,
+        stop_loss_price_type: body.stop_loss.enabled
+          ? body.stop_loss.price_type
+          : "",
+
+        metadata: JSON.parse(JSONbig.stringify(resPlaceOrder)),
+      };
+      const newTrade = await postgresDb
+        .insert(trades)
+        .values(addData as any)
+        .returning();
+      allReturn.data = {
+        ...allReturn.data,
+        newTrade,
       };
 
       // Store credentials and trigger WebSocket connection

@@ -70,51 +70,26 @@ export function signRequestOkx(
 }
 
 /**
- * Helper function to create request path with query parameters for GET requests
- * According to OKX documentation: GET request parameters are counted as requestpath, not body
- *
- * @param endpoint Base endpoint path (e.g., '/api/v5/account/balance')
- * @param queryParams Query parameters as object
- * @returns Full request path with query string
+ * Generates an OKX API signature.
+ * * @param timestamp - REST: ISO 8601 string | WS: Unix Epoch seconds string
+ * @param method - HTTP Method (e.g., 'GET' or 'POST')
+ * @param requestPath - API Endpoint (e.g., '/api/v5/account/balance' or '/users/self/verify')
+ * @param secretKey - Your API Secret Key
+ * @param body - JSON string of the request body (leave as empty string for GET or WS login)
  */
-export function createOkxRequestPath(
-  endpoint: string,
-  queryParams?: Record<string, string | number | boolean>
+export function signRequestOkxWs(
+  timestamp: string,
+  method: string,
+  requestPath: string,
+  secretKey: string,
+  body: string = ""
 ): string {
-  if (!queryParams || Object.keys(queryParams).length === 0) {
-    return endpoint;
-  }
+  // 1. Construct the pre-hash string
+  const prehash = `${timestamp}${method.toUpperCase()}${requestPath}${body}`;
 
-  const queryString = Object.entries(queryParams)
-    .map(([key, value]) => `${key}=${encodeURIComponent(value.toString())}`)
-    .join('&');
-
-  return `${endpoint}?${queryString}`;
+  // 2. Create HMAC SHA256 and encode to Base64
+  return crypto
+    .createHmac('sha256', secretKey)
+    .update(prehash)
+    .digest('base64');
 }
-
-/**
- * Example usage:
- *
- * ```typescript
- * const credentials = {
- *   key: 'your-api-key',
- *   secret: 'your-secret-key',
- *   passphrase: 'your-passphrase'
- * };
- *
- * // For GET request with query parameters
- * const getOptions = {
- *   method: 'GET',
- *   requestPath: createOkxRequestPath('/api/v5/account/balance', { ccy: 'BTC' })
- * };
- * const getHeaders = signRequestOkx(credentials, getOptions);
- *
- * // For POST request with body
- * const postOptions = {
- *   method: 'POST',
- *   requestPath: '/api/v5/trade/order',
- *   body: JSON.stringify({ instId: 'BTC-USDT', sz: '0.01', side: 'buy' })
- * };
- * const postHeaders = signRequestOkx(credentials, postOptions);
- * ```
- */

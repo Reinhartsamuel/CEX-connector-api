@@ -614,8 +614,8 @@ export const GateHandler = {
           position_type: body.position_type,
           market_type: body.market_type,
           size: resPlaceOrder.size,
-          leverage: 10,
-          leverage_type: "ISOLATED",
+          leverage: body?.leverage || 1,
+          leverage_type: body?.leverage_type || "ISOLATED",
           status: tradeStatus(),
           price: body.price,
           reduce_only: body.reduce_only,
@@ -645,7 +645,7 @@ export const GateHandler = {
 
           metadata: JSON.parse(JSONbig.stringify(resPlaceOrder)),
         };
-        console.log(addData, "addData");
+
         const newTrade = await postgresDb
           .insert(trades)
           .values(addData as any)

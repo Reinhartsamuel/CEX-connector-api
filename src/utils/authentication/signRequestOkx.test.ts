@@ -1,5 +1,5 @@
 import { test, expect } from "bun:test";
-import { signRequestOkx, createOkxRequestPath, OkxCredentials } from "./signRequestOkx";
+import { signRequestOkx, OkxCredentials } from "./signRequestOkx";
 
 const mockCredentials: OkxCredentials = {
   key: "test-api-key",
@@ -83,7 +83,7 @@ test("should generate timestamp in correct ISO format with milliseconds", () => 
 
   // Check ISO format: YYYY-MM-DDTHH:mm:ss.sssZ
   expect(timestamp).toMatch(/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z$/);
-  
+
   // Verify it's a valid date
   const date = new Date(timestamp);
   expect(date.toString()).not.toBe("Invalid Date");
@@ -92,65 +92,32 @@ test("should generate timestamp in correct ISO format with milliseconds", () => 
 test("should uppercase method as per OKX documentation", () => {
   const options = { ...mockGetOptions, method: "get" }; // lowercase
   const headers = signRequestOkx(mockCredentials, options);
-  
+
   // The function should uppercase the method internally
   expect(headers["OK-ACCESS-SIGN"]).toBeTruthy();
 });
 
-test("createOkxRequestPath should create path with query parameters", () => {
-  const endpoint = "/api/v5/account/balance";
-  const queryParams = { ccy: "BTC", limit: "100" };
-  
-  const requestPath = createOkxRequestPath(endpoint, queryParams);
-  
-  expect(requestPath).toBe("/api/v5/account/balance?ccy=BTC&limit=100");
-});
-
-test("createOkxRequestPath should handle empty query parameters", () => {
-  const endpoint = "/api/v5/account/balance";
-  
-  const requestPath = createOkxRequestPath(endpoint);
-  
-  expect(requestPath).toBe("/api/v5/account/balance");
-});
-
-test("createOkxRequestPath should encode query parameters", () => {
-  const endpoint = "/api/v5/trade/order";
-  const queryParams = { instId: "BTC-USDT", sz: "0.01" };
-  
-  const requestPath = createOkxRequestPath(endpoint, queryParams);
-  
-  expect(requestPath).toBe("/api/v5/trade/order?instId=BTC-USDT&sz=0.01");
-});
-
-test("createOkxRequestPath should handle boolean and number values", () => {
-  const endpoint = "/api/v5/account/config";
-  const queryParams = { showAll: true, limit: 50, algoOnly: false };
-  
-  const requestPath = createOkxRequestPath(endpoint, queryParams);
-  
-  expect(requestPath).toBe("/api/v5/account/config?showAll=true&limit=50&algoOnly=false");
 });
 
 test("signature should be base64 encoded", () => {
   const headers = signRequestOkx(mockCredentials, mockGetOptions);
   const signature = headers["OK-ACCESS-SIGN"];
-  
+
   // Base64 regex: alphanumeric, +, /, = padding
   expect(signature).toMatch(/^[A-Za-z0-9+/]+=*$/);
-  
+
   // Should not be hex (like Gate.io uses)
   expect(signature).not.toMatch(/^[0-9a-f]{128}$/);
 });
 
 test("should generate different timestamps for different calls", async () => {
   const headers1 = signRequestOkx(mockCredentials, mockGetOptions);
-  
+
   // Wait a moment to ensure timestamp would be different
   await Bun.sleep(10);
-  
+
   const headers2 = signRequestOkx(mockCredentials, mockGetOptions);
-  
+
   // Timestamps should be different
   expect(headers1["OK-ACCESS-TIMESTAMP"]).not.toBe(headers2["OK-ACCESS-TIMESTAMP"]);
 });

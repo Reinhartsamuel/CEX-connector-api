@@ -2,10 +2,10 @@
 import WebSocket from "ws";
 import Redis from "ioredis";
 import JSONbig from "json-bigint";
-import { signWebSocketRequest } from "../utils/signRequest";
 import { postgresDb } from "../db/client";
 import { exchanges, Trade, trades } from "../db/schema";
 import { and, desc, eq } from "drizzle-orm";
+import { signWebSocketRequest } from "../utils/authentication/signRequestGate";
 
 // ---- Redis Setup ---- //
 const redis = new Redis(process.env.REDIS_URL || "redis://127.0.0.1:6379");

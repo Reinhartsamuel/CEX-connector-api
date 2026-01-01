@@ -16,5 +16,9 @@ okxRouter.post(
   "/order",
   OkxHandler.order,
 );
+okxRouter.post(
+  "/close-order",
+  OkxHandler.order,
+);
 
 export default okxRouter;
