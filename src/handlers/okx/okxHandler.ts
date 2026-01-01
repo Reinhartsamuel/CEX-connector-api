@@ -363,14 +363,14 @@ export const OkxHandler = {
         metadata: JSON.parse(JSONbig.stringify(resPlaceOrder)),
       };
       console.log(addData,'addData')
-      // const newTrade = await postgresDb
-      //   .insert(trades)
-      //   .values(addData as any)
-      //   .returning();
-      // allReturn.data = {
-      //   ...allReturn.data,
-      //   newTrade,
-      // };
+      const newTrade = await postgresDb
+        .insert(trades)
+        .values(addData as any)
+        .returning();
+      allReturn.data = {
+        ...allReturn.data,
+        newTrade,
+      };
 
       // Store credentials and trigger WebSocket connection
       // await redis.hset(

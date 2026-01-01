@@ -10,6 +10,15 @@ module.exports = {
       max_restarts: 5,
       watch: false,
     },
-
+    {
+      name: "gateWorker",
+      script: "src/workers/gateWorkerRunner.ts",
+      interpreter: "bun",
+      cwd: "/home/ec2-user/CEX-connector-api",
+      env_file: "/home/ec2-user/CEX-connector-api/.env",
+      autorestart: true,
+      max_restarts: 5,
+      watch: false,
+    },
   ]
 };
