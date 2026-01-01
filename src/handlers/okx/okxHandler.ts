@@ -424,11 +424,25 @@ export const OkxHandler = {
     });
 
     const results = await Promise.allSettled(foundTrades.map(async (trade) => {
-      return await OkxServices.cancelOrder({
+      const resultCancel = await OkxServices.cancelOrder({
         instId: trade.contract,
         ordId: trade.order_id,
       });
+      return {...resultCancel, id: trade.id}
     }));
+
+    await Promise.allSettled(
+      results.map(async (result) => {
+        if (result?.status === 'fulfilled' && result?.value?.code === '0') {
+          await postgresDb
+            .update(trades)
+            .set({ status: 'cancelled' })
+            .where(eq(result.value.id, result.value.id));
+        } else {
+          console.log(`${JSON.stringify(result)}, cancelling status: ${result.status} failed!!!❌🅾❌`)
+        }
+      })
+    )
 
     return c.json(results)
   },
