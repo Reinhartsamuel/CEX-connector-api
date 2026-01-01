@@ -362,7 +362,7 @@ export const OkxHandler = {
 
         metadata: JSON.parse(JSONbig.stringify(resPlaceOrder)),
       };
-      console.log(addData,'addData')
+      console.log(JSON.stringify(addData),'addData')
       const newTrade = await postgresDb
         .insert(trades)
         .values(addData as any)
