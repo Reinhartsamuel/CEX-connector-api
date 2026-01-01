@@ -32,5 +32,5 @@ jobs:
             cd /home/ec2-user/CEX-connector-api
             git pull origin main
             bun install
-            pm2 restart ecosystem.config.js
+            pm2 reload ecosystem.config.js
           EOF
