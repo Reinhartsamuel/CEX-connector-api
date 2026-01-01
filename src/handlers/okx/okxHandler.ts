@@ -332,7 +332,7 @@ export const OkxHandler = {
         contract: body.contract,
         position_type: body.position_type,
         market_type: body.market_type,
-        size: resPlaceOrder.size,
+        size: body.size,
         leverage: body?.leverage || 1,
         leverage_type: body?.leverage_type || "ISOLATED",
         status: tradeStatus(),
@@ -342,7 +342,7 @@ export const OkxHandler = {
 
         //take profit:
         take_profit_enabled: body.take_profit.enabled,
-        take_profit_executed: (body.market_type ==='market' && body.take_profit.enabled && resPlaceOrder.code === '0'),
+        take_profit_executed: (body.take_profit.enabled && resPlaceOrder.code === '0'),
         take_profit_price: body.take_profit.enabled
           ? Number(body.take_profit.price)
           : 0,
@@ -352,7 +352,7 @@ export const OkxHandler = {
 
         //stop loss:
         stop_loss_enabled: body.stop_loss.enabled,
-        stop_loss_executed: (body.market_type ==='market' && body.stop_loss.enabled && resPlaceOrder.code === '0'),
+        stop_loss_executed: (body.stop_loss.enabled && resPlaceOrder.code === '0'),
         stop_loss_price: body.stop_loss.enabled
           ? Number(body.stop_loss.price)
           : 0,
