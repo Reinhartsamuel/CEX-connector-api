@@ -99,9 +99,10 @@ export const OkxHandler = {
       const body = (await c.req.json()) as z.infer<
         typeof okxRegisterUserSchema
       >;
-      const { api_key, api_secret, api_passphrase, user_id } = body;
-
+      let { api_key, api_secret, api_passphrase, user_id } = body;
       OkxServices.initialize(api_key, api_secret, api_passphrase);
+
+
       // find first on exchanges where exchange_title = 'okx' and user_id = user_id
       const existing = await postgresDb.query.exchanges.findFirst({
         where: and(
@@ -125,6 +126,9 @@ export const OkxHandler = {
         requestPath: "/api/v5/account/config",
         payloadString: undefined
       });
+      // zero out OkxServices credentials
+      OkxServices.clearCredentials();
+
       if (reqAccount.status === "error")
         return c.json(
           {
@@ -171,6 +175,10 @@ export const OkxHandler = {
         api_secret,
         api_passphrase,
       );
+      // clear memory
+      api_key = '';
+      api_secret = '';
+      api_passphrase = '';
 
       // Serialize AES payloads for DB
       const apiKeyCiphertext = JSON.stringify(encryptedApiKey);
@@ -233,14 +241,18 @@ export const OkxHandler = {
     try {
       const body = await c.req.json() as z.infer<
         typeof gatePlaceFuturesOrdersSchema>;
-      const {
+      let {
         api_key,
         api_secret,
         api_passphrase,
         user_id
       } = await OkxHandler.unwrapCredentials(body.exchange_id);
-
       OkxServices.initialize(api_key, api_secret, api_passphrase);
+      // clear memory
+      api_key = '';
+      api_secret = '';
+      api_passphrase = '';
+
 
       const allReturn: { message: string; data: any } = {
         message: "ok",
@@ -305,11 +317,10 @@ export const OkxHandler = {
         // ...(body.closeOrderAlgo && body.closeOrderAlgo.length > 0 && { closeOrderAlgo: body.closeOrderAlgo }),
       };
 
-      console.log(payload,'payload order okx')
-
-
-
       const resPlaceOrder = await OkxServices.placeOrder(payload);
+      // clear OkxServices credentials
+      OkxServices.clearCredentials();
+
       allReturn.data = {
         ...allReturn.data,
         resPlaceOrder,
@@ -409,10 +420,13 @@ export const OkxHandler = {
     const body = (await c.req.json())as z.infer<
       typeof okxCancelOrderSchema
     >;
-    const { api_key, api_secret, api_passphrase, user_id } =
+    let { api_key, api_secret, api_passphrase, user_id } =
       await OkxHandler.unwrapCredentials(body.exchange_id);
     OkxServices.initialize(api_key, api_secret, api_passphrase);
-
+    // clear memory
+    api_key=''
+    api_secret=''
+    api_passphrase=''
 
 
     // get trades from trades table by autotrader_i && contract from body
@@ -422,6 +436,12 @@ export const OkxHandler = {
         eq(trades.contract, body.contract)
       ),
     });
+
+    if (foundTrades.length === 0) {
+      return c.json({
+        message: "No trades found",
+      });
+    }
 
     const results = await Promise.allSettled(foundTrades.map(async (trade) => {
       const resultCancel = await OkxServices.cancelOrder({
@@ -443,6 +463,8 @@ export const OkxHandler = {
         }
       })
     )
+    // clear OkxServices credentials
+    OkxServices.clearCredentials();
 
     return c.json(results)
   },
