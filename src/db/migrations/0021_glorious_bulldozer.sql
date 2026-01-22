@@ -1,0 +1,1 @@
+ALTER TABLE "exchanges" DROP CONSTRAINT "exchanges_user_id_exchange_title_unique";

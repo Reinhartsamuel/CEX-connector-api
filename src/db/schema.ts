@@ -56,7 +56,7 @@ export const exchanges = pgTable('exchanges', {
   market_code: text('market_code'),
 }, (table) => {
   return {
-    unique_user_exchange: unique().on(table.user_id, table.exchange_title),
+    // unique_user_exchange: unique().on(table.user_id, table.exchange_title),
   };
 });
 
@@ -218,6 +218,8 @@ export const trades = pgTable('trades', {
   close_order_id:text('close_order_id'),
   close_filled_at:integer('close_filled_at'),
   close_reason:text('close_reason'),
+  close_fill_price:text('close_fill_price'), // price executed when filled.
+  closed_at: timestamp('closed_at', { withTimezone: true }),
 
 
   contract: text('contract').notNull(), // Trading pair like 'BTC_USDT'
@@ -232,8 +234,9 @@ export const trades = pgTable('trades', {
 
   status: text('status').notNull(), // 'open', 'filled', 'cancelled', 'closed', 'failed'
   position_status:text('position_status'),
-  closed_at: timestamp('closed_at', { withTimezone: true }),
 
+  cancelled_at: timestamp('cancelled_at', { withTimezone: true }),
+  cancel_reason:text('cancel_reason'),
 
   reduce_only: boolean('reduce_only').default(false),
   take_profit_enabled: boolean('take_profit_enabled').default(false),
@@ -244,6 +247,7 @@ export const trades = pgTable('trades', {
   stop_loss_executed: boolean('stop_loss_executed').default(false),
   stop_loss_price: numeric('stop_loss_price', { precision: 20, scale: 8 }),
   stop_loss_price_type: text('stop_loss_price_type'), // 'mark', 'index', 'last'
+
   metadata: jsonb('metadata'), // Additional trade metadata
   is_tpsl: boolean('is_tpsl').default(false), // if this is principal trade then false, if TP or SL order then true
   tpsl_type:text('tpsl_type'),
@@ -253,7 +257,7 @@ export const trades = pgTable('trades', {
 
 }, (table) => {
   return {
-    unique_exchange_trade: unique().on(table.exchange_id, table.trade_id),
+    // unique_exchange_trade: unique().on(table.exchange_id, table.trade_id),
   };
 });
 // 2. 👇 Add the foreign key constraint separately using relations

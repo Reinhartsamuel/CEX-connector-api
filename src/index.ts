@@ -7,22 +7,29 @@ import redis from './db/redis'
 import okxRouter from './routes/okxRoutes'
 import autotraderRouter from './routes/autotraderRoutes'
 import tradingPlanRouter from './routes/tradingPlanRoutes'
+import hyperliquidRouter from './routes/hyperliquidRoutes'
+import tokocryptoRouter from './routes/tokocryptoRoutes'
 
 const app = new Hono()
-app.use('*', async (c, next) => {
-  // If the path is /health, just skip the logger and go to the next middleware
-  if (c.req.path === '/health' || c.req.path === '/health-async') {
-    await next()
-  } else {
-    // Otherwise, use the standard Hono logger
-    await logger()(c, next)
-  }
-})
+// app.use('*', async (c, next) => {
+//   // If the path is /health, just skip the logger and go to the next middleware
+//   if (c.req.path === '/health' || c.req.path === '/health-async') {
+//     await next()
+//   } else {
+//     // Otherwise, use the standard Hono logger
+//     await logger()(c, next)
+//   }
+// })
 app.get('/', (c) => {
   return c.text('Hello Hono!')
 })
 app.route('/gate', gateRouter)
 app.route('/okx', okxRouter)
+app.route('/hyperliquid', hyperliquidRouter)
+app.route('/tokocrypto', tokocryptoRouter)
+
+
+
 app.route('/sse', sseRouter)
 app.route('/autotraders', autotraderRouter)
 app.route('/trading-plans', tradingPlanRouter)

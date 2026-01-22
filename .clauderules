@@ -1,0 +1,15 @@
+# Archetype: Lord / Steel
+
+# Priority: Determinism, Predictability, Data Integrity
+
+
+
+- Tech Stack: Bun, Hono, PostgreSQL (Drizzle), TypeScript.
+
+- Constraint: Never suggest "optimistic UI" updates for backend reconciliation.
+
+- Database: All financial state changes must be wrapped in a PostgreSQL transaction in /src/db/schemas.ts
+
+- Websockets: Use a sequence-number based reconciliation. If a sequence is skipped, trigger a REST API fallback immediately to sync state.
+
+- Documentation: Strictly follow the Hyperliquid technical specs provided. Do not guess field names.

@@ -126,7 +126,7 @@ export const AutotraderHandler = {
       );
     } catch (error: any) {
       console.error("Error creating autotrader:", error);
-      
+
       if (error.name === "ZodError") {
         return c.json(
           {
@@ -151,7 +151,7 @@ export const AutotraderHandler = {
   getById: async function (c: Context) {
     try {
       const id = parseInt(c.req.param("id"));
-      
+
       if (isNaN(id) || id <= 0) {
         return c.json(
           {
@@ -212,7 +212,7 @@ export const AutotraderHandler = {
 
       // Build where conditions
       const conditions = [];
-      
+
       if (validatedQuery.id) conditions.push(eq(autotraders.id, validatedQuery.id));
       if (validatedQuery.user_id) conditions.push(eq(autotraders.user_id, validatedQuery.user_id));
       if (validatedQuery.exchange_id) conditions.push(eq(autotraders.exchange_id, validatedQuery.exchange_id));
@@ -229,7 +229,7 @@ export const AutotraderHandler = {
       if (validatedQuery.autocompound !== undefined) conditions.push(eq(autotraders.autocompound, validatedQuery.autocompound));
 
       // Build order by
-      const orderBy = validatedQuery.sort_order === "desc" 
+      const orderBy = validatedQuery.sort_order === "desc"
         ? desc(autotraders[validatedQuery.sort_by as keyof typeof autotraders.$inferSelect])
         : asc(autotraders[validatedQuery.sort_by as keyof typeof autotraders.$inferSelect]);
 
@@ -262,7 +262,7 @@ export const AutotraderHandler = {
       });
     } catch (error: any) {
       console.error("Error querying autotraders:", error);
-      
+
       if (error.name === "ZodError") {
         return c.json(
           {
@@ -287,7 +287,7 @@ export const AutotraderHandler = {
   update: async function (c: Context) {
     try {
       const id = parseInt(c.req.param("id"));
-      
+
       if (isNaN(id) || id <= 0) {
         return c.json(
           {
@@ -436,7 +436,7 @@ export const AutotraderHandler = {
       });
     } catch (error: any) {
       console.error("Error updating autotrader:", error);
-      
+
       if (error.name === "ZodError") {
         return c.json(
           {
@@ -461,7 +461,7 @@ export const AutotraderHandler = {
   delete: async function (c: Context) {
     try {
       const id = parseInt(c.req.param("id"));
-      
+
       if (isNaN(id) || id <= 0) {
         return c.json(
           {
@@ -514,7 +514,7 @@ export const AutotraderHandler = {
   updateStatus: async function (c: Context) {
     try {
       const id = parseInt(c.req.param("id"));
-      
+
       if (isNaN(id) || id <= 0) {
         return c.json(
           {
@@ -561,7 +561,7 @@ export const AutotraderHandler = {
       });
     } catch (error: any) {
       console.error("Error updating autotrader status:", error);
-      
+
       if (error.name === "ZodError") {
         return c.json(
           {
@@ -586,7 +586,7 @@ export const AutotraderHandler = {
   updateBalance: async function (c: Context) {
     try {
       const id = parseInt(c.req.param("id"));
-      
+
       if (isNaN(id) || id <= 0) {
         return c.json(
           {
@@ -633,7 +633,7 @@ export const AutotraderHandler = {
       });
     } catch (error: any) {
       console.error("Error updating autotrader balance:", error);
-      
+
       if (error.name === "ZodError") {
         return c.json(
           {
@@ -679,7 +679,7 @@ export const AutotraderHandler = {
 
       const existingUserIds = new Set(existingUsers.map(u => u.id));
       const missingUserIds = userIds.filter(id => !existingUserIds.has(id));
-      
+
       if (missingUserIds.length > 0) {
         return c.json(
           {
@@ -699,7 +699,7 @@ export const AutotraderHandler = {
 
       const existingExchangeIds = new Set(existingExchanges.map(e => e.id));
       const missingExchangeIds = exchangeIds.filter(id => !existingExchangeIds.has(id));
-      
+
       if (missingExchangeIds.length > 0) {
         return c.json(
           {
@@ -714,7 +714,7 @@ export const AutotraderHandler = {
       const tradingPlanIds = validatedData.autotraders
         .map(at => at.trading_plan_id)
         .filter((id): id is number => id !== undefined);
-      
+
       if (tradingPlanIds.length > 0) {
         const uniqueTradingPlanIds = [...new Set(tradingPlanIds)];
         const existingTradingPlans = await postgresDb
@@ -724,7 +724,7 @@ export const AutotraderHandler = {
 
         const existingTradingPlanIds = new Set(existingTradingPlans.map(tp => tp.id));
         const missingTradingPlanIds = uniqueTradingPlanIds.filter(id => !existingTradingPlanIds.has(id));
-        
+
         if (missingTradingPlanIds.length > 0) {
           return c.json(
             {
@@ -759,7 +759,7 @@ export const AutotraderHandler = {
       );
     } catch (error: any) {
       console.error("Error batch creating autotraders:", error);
-      
+
       if (error.name === "ZodError") {
         return c.json(
           {

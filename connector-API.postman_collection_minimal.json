@@ -1,0 +1,485 @@
+{
+  "info": {
+    "name": "Byscript Connector API - Minimal",
+    "description": "Minimal Postman collection for Byscript Connector API covering all essential endpoints",
+    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
+  },
+  "variable": [
+    {
+      "key": "baseUrl",
+      "value": "https://cex-connector-api-production.up.railway.app",
+      "type": "string"
+    },
+    {
+      "key": "gateApiKey",
+      "value": "your_gate_io_api_key_here",
+      "type": "string"
+    },
+    {
+      "key": "gateApiSecret",
+      "value": "your_gate_io_api_secret_here",
+      "type": "string"
+    },
+    {
+      "key": "okxApiKey",
+      "value": "your_okx_api_key_here",
+      "type": "string"
+    },
+    {
+      "key": "okxApiSecret",
+      "value": "your_okx_api_secret_here",
+      "type": "string"
+    },
+    {
+      "key": "okxPassphrase",
+      "value": "your_okx_passphrase_here",
+      "type": "string"
+    }
+  ],
+  "item": [
+    {
+      "name": "System Health",
+      "item": [
+        {
+          "name": "Health Check",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/health",
+              "host": ["{{baseUrl}}"],
+              "path": ["health"]
+            }
+          }
+        },
+        {
+          "name": "Async Health Check",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/health-async",
+              "host": ["{{baseUrl}}"],
+              "path": ["health-async"]
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "Gate.io Exchange",
+      "item": [
+        {
+          "name": "Register User",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"api_key\": \"{{gateApiKey}}\",\n  \"api_secret\": \"{{gateApiSecret}}\",\n  \"user_id\": \"user-001\",\n  \"exchange_user_id\": \"gate_account_001\"\n}"
+            },
+            "url": {
+              "raw": "{{baseUrl}}/gate/register-user",
+              "host": ["{{baseUrl}}"],
+              "path": ["gate", "register-user"]
+            }
+          }
+        },
+        {
+          "name": "Place Futures Order (Direct)",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "X-Gate-API-Key",
+                "value": "{{gateApiKey}}"
+              },
+              {
+                "key": "X-Gate-API-Secret",
+                "value": "{{gateApiSecret}}"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"contract\": \"BTC_USDT\",\n  \"size\": 1,\n  \"price\": 50000,\n  \"side\": \"buy\",\n  \"tif\": \"ioc\",\n  \"text\": \"order-001\",\n  \"reduce_only\": false,\n  \"close_position\": false,\n  \"autotrader_id\": \"autotrader-001\",\n  \"user_id\": \"user-001\"\n}"
+            },
+            "url": {
+              "raw": "{{baseUrl}}/gate/place-futures-order",
+              "host": ["{{baseUrl}}"],
+              "path": ["gate", "place-futures-order"]
+            }
+          }
+        },
+        {
+          "name": "Place Futures Order (DB)",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"contract\": \"BTC_USDT\",\n  \"size\": 1,\n  \"price\": 50000,\n  \"side\": \"buy\",\n  \"tif\": \"ioc\",\n  \"text\": \"order-001\",\n  \"reduce_only\": false,\n  \"close_position\": false,\n  \"autotrader_id\": \"autotrader-001\",\n  \"user_id\": \"user-001\",\n  \"exchange_id\": \"exchange-001\"\n}"
+            },
+            "url": {
+              "raw": "{{baseUrl}}/gate/place-futures-order-x",
+              "host": ["{{baseUrl}}"],
+              "path": ["gate", "place-futures-order-x"]
+            }
+          }
+        },
+        {
+          "name": "Close Futures Order",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"contract\": \"BTC_USDT\",\n  \"size\": 1,\n  \"price\": 50000,\n  \"side\": \"sell\",\n  \"tif\": \"ioc\",\n  \"text\": \"close-order-001\",\n  \"reduce_only\": false,\n  \"close_position\": true,\n  \"autotrader_id\": \"autotrader-001\",\n  \"user_id\": \"user-001\",\n  \"exchange_id\": \"exchange-001\"\n}"
+            },
+            "url": {
+              "raw": "{{baseUrl}}/gate/close-futures-order-x",
+              "host": ["{{baseUrl}}"],
+              "path": ["gate", "close-futures-order-x"]
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "OKX Exchange",
+      "item": [
+        {
+          "name": "Register User",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"api_key\": \"{{okxApiKey}}\",\n  \"api_secret\": \"{{okxApiSecret}}\",\n  \"passphrase\": \"{{okxPassphrase}}\",\n  \"user_id\": \"user-001\",\n  \"exchange_user_id\": \"okx_account_001\"\n}"
+            },
+            "url": {
+              "raw": "{{baseUrl}}/okx/register-user",
+              "host": ["{{baseUrl}}"],
+              "path": ["okx", "register-user"]
+            }
+          }
+        },
+        {
+          "name": "Place Order",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"contract\": \"BTC-USDT-SWAP\",\n  \"size\": 1,\n  \"price\": 50000,\n  \"side\": \"buy\",\n  \"order_type\": \"limit\",\n  \"tif\": \"ioc\",\n  \"text\": \"order-001\",\n  \"reduce_only\": false,\n  \"close_position\": false,\n  \"autotrader_id\": \"autotrader-001\",\n  \"user_id\": \"user-001\",\n  \"exchange_id\": \"exchange-001\"\n}"
+            },
+            "url": {
+              "raw": "{{baseUrl}}/okx/order",
+              "host": ["{{baseUrl}}"],
+              "path": ["okx", "order"]
+            }
+          }
+        },
+        {
+          "name": "Cancel Order",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"order_id\": \"order-001\",\n  \"contract\": \"BTC-USDT-SWAP\",\n  \"exchange_id\": \"exchange-001\"\n}"
+            },
+            "url": {
+              "raw": "{{baseUrl}}/okx/cancel-order",
+              "host": ["{{baseUrl}}"],
+              "path": ["okx", "cancel-order"]
+            }
+          }
+        },
+        {
+          "name": "Close Position",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"contract\": \"BTC-USDT-SWAP\",\n  \"size\": 1,\n  \"price\": 50000,\n  \"side\": \"sell\",\n  \"order_type\": \"market\",\n  \"tif\": \"ioc\",\n  \"text\": \"close-position-001\",\n  \"reduce_only\": true,\n  \"close_position\": true,\n  \"autotrader_id\": \"autotrader-001\",\n  \"user_id\": \"user-001\",\n  \"exchange_id\": \"exchange-001\"\n}"
+            },
+            "url": {
+              "raw": "{{baseUrl}}/okx/close-position",
+              "host": ["{{baseUrl}}"],
+              "path": ["okx", "close-position"]
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "Hyperliquid Exchange",
+      "item": [
+        {
+          "name": "Register User",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"wallet_address\": \"0xYourWalletAddress\",\n  \"private_key\": \"your_private_key_here\",\n  \"user_id\": \"user-001\"\n}"
+            },
+            "url": {
+              "raw": "{{baseUrl}}/hyperliquid/register-user",
+              "host": ["{{baseUrl}}"],
+              "path": ["hyperliquid", "register-user"]
+            }
+          }
+        },
+        {
+          "name": "Place Futures Order",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"contract\": \"BTC\",\n  \"size\": 0.1,\n  \"price\": 50000,\n  \"side\": \"buy\",\n  \"tif\": \"ioc\",\n  \"text\": \"order-001\",\n  \"reduce_only\": false,\n  \"close_position\": false,\n  \"autotrader_id\": \"autotrader-001\",\n  \"user_id\": \"user-001\",\n  \"exchange_id\": \"exchange-001\"\n}"
+            },
+            "url": {
+              "raw": "{{baseUrl}}/hyperliquid/place-futures-order",
+              "host": ["{{baseUrl}}"],
+              "path": ["hyperliquid", "place-futures-order"]
+            }
+          }
+        },
+        {
+          "name": "Cancel Order",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"order_id\": \"order-001\",\n  \"contract\": \"BTC\",\n  \"exchange_id\": \"exchange-001\"\n}"
+            },
+            "url": {
+              "raw": "{{baseUrl}}/hyperliquid/cancel-order",
+              "host": ["{{baseUrl}}"],
+              "path": ["hyperliquid", "cancel-order"]
+            }
+          }
+        },
+        {
+          "name": "Close Futures Order",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"contract\": \"BTC\",\n  \"size\": 0.1,\n  \"price\": 50000,\n  \"side\": \"sell\",\n  \"tif\": \"ioc\",\n  \"text\": \"close-order-001\",\n  \"reduce_only\": true,\n  \"close_position\": true,\n  \"autotrader_id\": \"autotrader-001\",\n  \"user_id\": \"user-001\",\n  \"exchange_id\": \"exchange-001\"\n}"
+            },
+            "url": {
+              "raw": "{{baseUrl}}/hyperliquid/close-futures-order",
+              "host": ["{{baseUrl}}"],
+              "path": ["hyperliquid", "close-futures-order"]
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "Server-Sent Events",
+      "item": [
+        {
+          "name": "Subscribe to Order Updates",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Accept",
+                "value": "text/event-stream"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/sse/sse/orders/user-001",
+              "host": ["{{baseUrl}}"],
+              "path": ["sse", "sse", "orders", "user-001"]
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "Autotrader Management",
+      "item": [
+        {
+          "name": "Create Autotrader",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"name\": \"BTC Scalper\",\n  \"description\": \"Scalping strategy for BTC\",\n  \"strategy_type\": \"scalping\",\n  \"exchange_id\": \"exchange-001\",\n  \"user_id\": \"user-001\",\n  \"initial_balance\": 1000,\n  \"risk_per_trade\": 0.02,\n  \"max_drawdown\": 0.1,\n  \"status\": \"active\"\n}"
+            },
+            "url": {
+              "raw": "{{baseUrl}}/autotraders",
+              "host": ["{{baseUrl}}"],
+              "path": ["autotraders"]
+            }
+          }
+        },
+        {
+          "name": "Get Autotrader by ID",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/autotraders/autotrader-001",
+              "host": ["{{baseUrl}}"],
+              "path": ["autotraders", "autotrader-001"]
+            }
+          }
+        },
+        {
+          "name": "Update Autotrader Status",
+          "request": {
+            "method": "PATCH",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"status\": \"paused\"\n}"
+            },
+            "url": {
+              "raw": "{{baseUrl}}/autotraders/autotrader-001/status",
+              "host": ["{{baseUrl}}"],
+              "path": ["autotraders", "autotrader-001", "status"]
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "Trading Plan Management",
+      "item": [
+        {
+          "name": "Create Trading Plan",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"name\": \"BTC Swing Strategy\",\n  \"description\": \"Swing trading strategy for BTC\",\n  \"strategy_type\": \"swing\",\n  \"user_id\": \"user-001\",\n  \"visibility\": \"public\",\n  \"status\": \"active\"\n}"
+            },
+            "url": {
+              "raw": "{{baseUrl}}/trading-plans",
+              "host": ["{{baseUrl}}"],
+              "path": ["trading-plans"]
+            }
+          }
+        },
+        {
+          "name": "Get Trading Plan by ID",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/trading-plans/plan-001",
+              "host": ["{{baseUrl}}"],
+              "path": ["trading-plans", "plan-001"]
+            }
+          }
+        },
+        {
+          "name": "Update Trading Plan Status",
+          "request": {
+            "method": "PATCH",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"status\": \"paused\"\n}"
+            },
+            "url": {
+              "raw": "{{baseUrl}}/trading-plans/plan-001/status",
+              "host": ["{{baseUrl}}"],
+              "path": ["trading-plans", "plan-001", "status"]
+            }
+          }
+        }
+      ]
+    }
+  ]
+}

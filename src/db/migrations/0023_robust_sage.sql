@@ -1,0 +1,1 @@
+ALTER TABLE "trades" ADD COLUMN "close_fill_price" text;

@@ -93,3 +93,73 @@ export interface OkxSignRequestOptions {
   requestPath: string; // e.g., '/api/v5/account/balance?ccy=BTC'
   body?: string | undefined; // JSON string of request body (empty for GET requests)
 }
+
+export interface HyperliquidOrder {
+  contract: string;           // Asset symbol, e.g., "ETH" or "BTC-USDT"
+  position_type: 'long' | 'short';
+  market_type: 'market' | 'limit';
+  size: number;
+  price: string;              // Limit price (send 0 for market orders, logic handles it)
+  reduce_only?: boolean;
+
+  // Optional fields for leverage (handled in the Handler before placement)
+  leverage?: number;
+  leverage_type?: 'CROSS' | 'ISOLATED';
+
+  // Optional TP/SL fields to match your other exchange schemas
+  // (Note: Trigger orders require specific 'trigger' logic in the service)
+  take_profit?: {
+    enabled: boolean;
+    price: number;
+    price_type?: string; // e.g., 'mark' or 'last'
+  };
+  stop_loss?: {
+    enabled: boolean;
+    price: number;
+    price_type?: string;
+  };
+}
+
+export interface HyperliquidCancelOrder {
+  contract: string;
+  order_id: number; // Hyperliquid OIDs are numbers
+}
+
+export interface HyperliquidServiceConfig {
+  privateKey: string; // The raw private key (decrypted)
+  baseUrl?: string;   // Optional, defaults to mainnet
+}
+
+export interface TokocryptoOrder {
+  contract: string;
+  position_type: 'long' | 'short';
+  market_type: 'market' | 'limit';
+  size: number;
+  price?: number;
+  reduce_only?: boolean;
+  take_profit?: {
+    enabled: boolean;
+    price: number;
+    price_type?: string;
+  };
+  stop_loss?: {
+    enabled: boolean;
+    price: number;
+    price_type?: string;
+  };
+}
+
+export interface TokocryptoCancelOrder {
+  instId: string;
+  ordId: string;
+}
+
+export interface TokocryptoCredentials {
+  key: string;
+  secret: string;
+}
+
+export interface TokocryptoServiceConfig {
+  credentials: TokocryptoCredentials | null;
+  baseUrl: string;
+}

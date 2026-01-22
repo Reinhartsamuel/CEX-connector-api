@@ -1,0 +1,7 @@
+✅ Agent Authorized!
+
+Address: 0x5dca5108E93e68B57E9A0Fe99070C3F4998FFbD1
+
+Private Key: 0xb1de6a09568554d5fbb923db9d6c59dd42b30ccebc5eefab692266e0fde9be54
+
+The keys above should now be sent to your secure backend.

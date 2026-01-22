@@ -148,6 +148,34 @@
       "when": 1767291261429,
       "tag": "0020_short_malice",
       "breakpoints": true
+    },
+    {
+      "idx": 21,
+      "version": "7",
+      "when": 1768432744185,
+      "tag": "0021_glorious_bulldozer",
+      "breakpoints": true
+    },
+    {
+      "idx": 22,
+      "version": "7",
+      "when": 1768438758766,
+      "tag": "0022_slimy_swarm",
+      "breakpoints": true
+    },
+    {
+      "idx": 23,
+      "version": "7",
+      "when": 1768838102380,
+      "tag": "0023_robust_sage",
+      "breakpoints": true
+    },
+    {
+      "idx": 24,
+      "version": "7",
+      "when": 1768882730596,
+      "tag": "0024_polite_rick_jones",
+      "breakpoints": true
     }
   ]
 }

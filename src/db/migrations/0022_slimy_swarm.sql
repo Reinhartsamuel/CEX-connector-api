@@ -1,0 +1,1 @@
+ALTER TABLE "trades" DROP CONSTRAINT "trades_exchange_id_trade_id_unique";

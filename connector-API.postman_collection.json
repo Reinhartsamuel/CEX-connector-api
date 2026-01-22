@@ -1,31 +1,405 @@
 {
   "info": {
     "name": "Byscript Connector API",
-    "description": "API connector for cryptocurrency trading across multiple exchanges. Currently supports Gate.io futures trading with plans to expand to OKX, Binance, and other exchanges.",
+    "description": "Complete API connector for cryptocurrency trading across multiple exchanges. Supports Gate.io, OKX, and Hyperliquid futures trading with SSE for real-time updates, autotrader management, and trading plan management.",
     "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
   },
   "variable": [
     {
-      "key": "baseUrl",
+      "key": "railway-baseUrl",
       "value": "https://cex-connector-api-production.up.railway.app",
       "type": "string"
     },
     {
-      "key": "apiKey",
+      "key": "ec2-baseUrl",
+      "value": "http://35.169.105.251",
+      "type": "string"
+    },
+    {
+      "key": "local-baseUrl",
+      "value": "http://localhost:1122",
+      "type": "string"
+    },
+    {
+      "key": "ec2-baseUrl",
+      "value": "http://35.169.105.251",
+      "type": "string"
+    },
+    {
+      "key": "gateApiKey",
       "value": "your_gate_io_api_key_here",
       "type": "string"
     },
     {
-      "key": "apiSecret",
+      "key": "gateApiSecret",
       "value": "your_gate_io_api_secret_here",
+      "type": "string"
+    },
+    {
+      "key": "okxApiKey",
+      "value": "your_okx_api_key_here",
+      "type": "string"
+    },
+    {
+      "key": "okxApiSecret",
+      "value": "your_okx_api_secret_here",
+      "type": "string"
+    },
+    {
+      "key": "okxPassphrase",
+      "value": "your_okx_passphrase_here",
       "type": "string"
     }
   ],
   "item": [
     {
-      "name": "Gate.io Futures Trading",
-      "description": "Gate.io futures trading endpoints",
+      "name": "System Health",
       "item": [
+        {
+          "name": "Health Check",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{local-baseUrl}}/health",
+              "host": ["{{local-baseUrl}}"],
+              "path": ["health"]
+            },
+            "description": "Health check endpoint that tests both PostgreSQL and Redis connections sequentially"
+          },
+          "response": []
+        },
+        {
+          "name": "Async Health Check",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{local-baseUrl}}/health-async",
+              "host": ["{{local-baseUrl}}"],
+              "path": ["health-async"]
+            },
+            "description": "Health check endpoint that tests PostgreSQL and Redis connections in parallel for faster response"
+          },
+          "response": []
+        }
+      ]
+    },
+    {
+      "name": "Gate.io Exchange",
+      "description": "Gate.io futures trading endpoints with two authentication patterns: direct API key headers and exchange_id from database",
+      "item": [
+        {
+          "name": "Register User",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"api_key\": \"{{gateApiKey}}\",\n  \"api_secret\": \"{{gateApiSecret}}\",\n  \"user_id\": \"your_user_id_here\",\n  \"exchange_user_id\": \"your_gate_io_account_id\"\n}"
+            },
+            "url": {
+              "raw": "{{local-baseUrl}}/gate/register-user",
+              "host": ["{{local-baseUrl}}"],
+              "path": ["gate", "register-user"]
+            },
+            "description": "Register a Gate.io user by storing API credentials in the database. Returns an exchange_id for future operations."
+          },
+          "response": []
+        },
+        {
+          "name": "Place Futures Order (Direct API)",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "X-Gate-API-Key",
+                "value": "{{gateApiKey}}"
+              },
+              {
+                "key": "X-Gate-API-Secret",
+                "value": "{{gateApiSecret}}"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"contract\": \"BTC_USDT\",\n  \"size\": 1,\n  \"price\": 50000,\n  \"side\": \"buy\",\n  \"tif\": \"ioc\",\n  \"text\": \"order-001\",\n  \"reduce_only\": false,\n  \"close_position\": false,\n  \"autotrader_id\": \"autotrader-001\",\n  \"user_id\": \"user-001\"\n}"
+            },
+            "url": {
+              "raw": "{{local-baseUrl}}/gate/place-futures-order",
+              "host": ["{{local-baseUrl}}"],
+              "path": ["gate", "place-futures-order"]
+            },
+            "description": "Place a futures order using API keys in headers (direct authentication)"
+          },
+          "response": []
+        },
+        {
+          "name": "Place Futures Order (Database)",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"contract\": \"BTC_USDT\",\n  \"size\": 1,\n  \"price\": 50000,\n  \"side\": \"buy\",\n  \"tif\": \"ioc\",\n  \"text\": \"order-001\",\n  \"reduce_only\": false,\n  \"close_position\": false,\n  \"autotrader_id\": \"autotrader-001\",\n  \"user_id\": \"user-001\",\n  \"exchange_id\": \"your_exchange_id_from_registration\"\n}"
+            },
+            "url": {
+              "raw": "{{local-baseUrl}}/gate/place-futures-order-x",
+              "host": ["{{local-baseUrl}}"],
+              "path": ["gate", "place-futures-order-x"]
+            },
+            "description": "Place a futures order using exchange_id to retrieve API credentials from database"
+          },
+          "response": []
+        },
+        {
+          "name": "Close Futures Order",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"contract\": \"BTC_USDT\",\n  \"size\": 1,\n  \"price\": 50000,\n  \"side\": \"sell\",\n  \"tif\": \"ioc\",\n  \"text\": \"close-order-001\",\n  \"reduce_only\": false,\n  \"close_position\": true,\n  \"autotrader_id\": \"autotrader-001\",\n  \"user_id\": \"user-001\",\n  \"exchange_id\": \"your_exchange_id_from_registration\"\n}"
+            },
+            "url": {
+              "raw": "{{local-baseUrl}}/gate/close-futures-order-x",
+              "host": ["{{local-baseUrl}}"],
+              "path": ["gate", "close-futures-order-x"]
+            },
+            "description": "Close a futures position using exchange_id to retrieve API credentials from database"
+          },
+          "response": []
+        },
+        {
+          "name": "Whitelist Request",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "X-Gate-API-Key",
+                "value": "{{gateApiKey}}"
+              },
+              {
+                "key": "X-Gate-API-Secret",
+                "value": "{{gateApiSecret}}"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"method\": \"GET\",\n  \"requestPath\": \"/futures/usdt/accounts\",\n  \"payloadString\": \"\"\n}"
+            },
+            "url": {
+              "raw": "{{local-baseUrl}}/gate/whitelist-request",
+              "host": ["{{local-baseUrl}}"],
+              "path": ["gate", "whitelist-request"]
+            },
+            "description": "Make direct API calls to Gate.io (playground endpoint for testing)"
+          },
+          "response": []
+        },
+        {
+          "name": "Kuda Test Endpoint",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{local-baseUrl}}/gate/kuda",
+              "host": ["{{local-baseUrl}}"],
+              "path": ["gate", "kuda"]
+            },
+            "description": "Test endpoint for checking Redis position data"
+          },
+          "response": []
+        }
+      ]
+    },
+    {
+      "name": "OKX Exchange",
+      "description": "OKX futures trading endpoints using exchange_id pattern for authentication",
+      "item": [
+        {
+          "name": "Register User",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"api_key\": \"{{okxApiKey}}\",\n  \"api_secret\": \"{{okxApiSecret}}\",\n  \"passphrase\": \"{{okxPassphrase}}\",\n  \"user_id\": \"your_user_id_here\",\n  \"exchange_user_id\": \"your_okx_account_id\"\n}"
+            },
+            "url": {
+              "raw": "{{local-baseUrl}}/okx/register-user",
+              "host": ["{{local-baseUrl}}"],
+              "path": ["okx", "register-user"]
+            },
+            "description": "Register an OKX user by storing API credentials in the database. Returns an exchange_id for future operations."
+          },
+          "response": []
+        },
+        {
+          "name": "Place Order",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"contract\": \"BTC-USDT-SWAP\",\n  \"size\": 1,\n  \"price\": 50000,\n  \"side\": \"buy\",\n  \"order_type\": \"limit\",\n  \"tif\": \"ioc\",\n  \"text\": \"order-001\",\n  \"reduce_only\": false,\n  \"close_position\": false,\n  \"autotrader_id\": \"autotrader-001\",\n  \"user_id\": \"user-001\",\n  \"exchange_id\": \"your_exchange_id_from_registration\"\n}"
+            },
+            "url": {
+              "raw": "{{local-baseUrl}}/okx/order",
+              "host": ["{{local-baseUrl}}"],
+              "path": ["okx", "order"]
+            },
+            "description": "Place an order on OKX using exchange_id to retrieve API credentials from database"
+          },
+          "response": []
+        },
+        {
+          "name": "Cancel Order",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"order_id\": \"your_order_id\",\n  \"contract\": \"BTC-USDT-SWAP\",\n  \"exchange_id\": \"your_exchange_id_from_registration\"\n}"
+            },
+            "url": {
+              "raw": "{{local-baseUrl}}/okx/cancel-order",
+              "host": ["{{local-baseUrl}}"],
+              "path": ["okx", "cancel-order"]
+            },
+            "description": "Cancel an existing order on OKX"
+          },
+          "response": []
+        },
+        {
+          "name": "Close Position",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"contract\": \"BTC-USDT-SWAP\",\n  \"size\": 1,\n  \"price\": 50000,\n  \"side\": \"sell\",\n  \"order_type\": \"market\",\n  \"tif\": \"ioc\",\n  \"text\": \"close-position-001\",\n  \"reduce_only\": true,\n  \"close_position\": true,\n  \"autotrader_id\": \"autotrader-001\",\n  \"user_id\": \"user-001\",\n  \"exchange_id\": \"your_exchange_id_from_registration\"\n}"
+            },
+            "url": {
+              "raw": "{{local-baseUrl}}/okx/close-position",
+              "host": ["{{local-baseUrl}}"],
+              "path": ["okx", "close-position"]
+            },
+            "description": "Close a position on OKX (uses same endpoint as order but with close_position=true)"
+          },
+          "response": []
+        },
+        {
+          "name": "Whitelist Request",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "OK-ACCESS-KEY",
+                "value": "{{okxApiKey}}"
+              },
+              {
+                "key": "OK-ACCESS-SIGN",
+                "value": "generated_signature_here"
+              },
+              {
+                "key": "OK-ACCESS-TIMESTAMP",
+                "value": "timestamp_here"
+              },
+              {
+                "key": "OK-ACCESS-PASSPHRASE",
+                "value": "{{okxPassphrase}}"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"method\": \"GET\",\n  \"requestPath\": \"/api/v5/account/balance\",\n  \"payloadString\": \"\"\n}"
+            },
+            "url": {
+              "raw": "{{local-baseUrl}}/okx/whitelist-request",
+              "host": ["{{local-baseUrl}}"],
+              "path": ["okx", "whitelist-request"]
+            },
+            "description": "Make direct API calls to OKX (playground endpoint for testing)"
+          },
+          "response": []
+        }
+      ]
+    },
+    {
+      "name": "Hyperliquid Exchange",
+      "description": "Hyperliquid L1 trading endpoints using agent wallet authentication",
+      "item": [
+        {
+          "name": "Register User",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"wallet_address\": \"0xYourWalletAddress\",\n  \"private_key\": \"your_private_key_here\",\n  \"user_id\": \"your_user_id_here\"\n}"
+            },
+            "url": {
+              "raw": "{{local-baseUrl}}/hyperliquid/register-user",
+              "host": ["{{local-baseUrl}}"],
+              "path": ["hyperliquid", "register-user"]
+            },
+            "description": "Register a Hyperliquid user by storing wallet credentials in the database"
+          },
+          "response": []
+        },
         {
           "name": "Place Futures Order",
           "request": {
@@ -34,268 +408,262 @@
               {
                 "key": "Content-Type",
                 "value": "application/json"
-              },
-              {
-                "key": "api-key",
-                "value": "{{apiKey}}"
-              },
-              {
-                "key": "api-secret",
-                "value": "{{apiSecret}}"
               }
             ],
             "body": {
               "mode": "raw",
-              "raw": "{\n  \"market_type\": \"market\",\n  \"price\": 50000.0,\n  \"contract\": \"BTC_USDT\",\n  \"leverage\": 10,\n  \"leverage_type\": \"ISOLATED\",\n  \"size\": 1000,\n  \"position_type\": \"long\",\n  \"take_profit\": {\n    \"enabled\": true,\n    \"price\": \"52000\",\n    \"price_type\": \"mark\"\n  },\n  \"stop_loss\": {\n    \"enabled\": true,\n    \"price\": \"48000\",\n    \"price_type\": \"mark\"\n  },\n  \"reduce_only\": false\n}"
+              "raw": "{\n  \"contract\": \"BTC\",\n  \"size\": 0.1,\n  \"price\": 50000,\n  \"side\": \"buy\",\n  \"tif\": \"ioc\",\n  \"text\": \"order-001\",\n  \"reduce_only\": false,\n  \"close_position\": false,\n  \"autotrader_id\": \"autotrader-001\",\n  \"user_id\": \"user-001\",\n  \"exchange_id\": \"your_exchange_id_from_registration\"\n}"
             },
             "url": {
-              "raw": "{{baseUrl}}/gate/place-futures-order",
-              "host": ["{{baseUrl}}"],
-              "path": ["gate", "place-futures-order"]
+              "raw": "{{local-baseUrl}}/hyperliquid/place-futures-order",
+              "host": ["{{local-baseUrl}}"],
+              "path": ["hyperliquid", "place-futures-order"]
             },
-            "description": "Place a new futures order with optional take profit and stop loss. For market orders, set price to 0 and market_type to 'market'. For limit orders, set price to desired entry price and market_type to 'limit'."
+            "description": "Place a futures order on Hyperliquid L1 using agent wallet authentication"
           },
           "response": []
         },
         {
-          "name": "Close Futures Position",
+          "name": "Cancel Order",
           "request": {
             "method": "POST",
             "header": [
               {
                 "key": "Content-Type",
                 "value": "application/json"
-              },
-              {
-                "key": "api-key",
-                "value": "{{apiKey}}"
-              },
-              {
-                "key": "api-secret",
-                "value": "{{apiSecret}}"
               }
             ],
             "body": {
               "mode": "raw",
-              "raw": "{\n  \"contract\": \"BTC_USDT\",\n  \"auto_size\": \"close_long\"\n}"
+              "raw": "{\n  \"order_id\": \"your_order_id\",\n  \"contract\": \"BTC\",\n  \"exchange_id\": \"your_exchange_id_from_registration\"\n}"
             },
             "url": {
-              "raw": "{{baseUrl}}/gate/close-futures-order",
-              "host": ["{{baseUrl}}"],
-              "path": ["gate", "close-futures-order"]
+              "raw": "{{local-baseUrl}}/hyperliquid/cancel-order",
+              "host": ["{{local-baseUrl}}"],
+              "path": ["hyperliquid", "cancel-order"]
             },
-            "description": "Close an existing futures position. Use 'close_long' to close long positions and 'close_short' to close short positions."
+            "description": "Cancel an existing order on Hyperliquid"
           },
           "response": []
         },
         {
-          "name": "Cancel Futures Order",
+          "name": "Close Futures Order",
           "request": {
-            "method": "DELETE",
+            "method": "POST",
             "header": [
               {
                 "key": "Content-Type",
                 "value": "application/json"
-              },
-              {
-                "key": "api-key",
-                "value": "{{apiKey}}"
-              },
-              {
-                "key": "api-secret",
-                "value": "{{apiSecret}}"
               }
             ],
-            "url": {
-              "raw": "{{baseUrl}}/gate/cancel-futures-order?trade_id=123456789&tp_id=987654321&sl_id=555555555",
-              "host": ["{{baseUrl}}"],
-              "path": ["gate", "cancel-futures-order"],
-              "query": [
-                {
-                  "key": "trade_id",
-                  "value": "123456789",
-                  "description": "The main order ID to cancel"
-                },
-                {
-                  "key": "tp_id",
-                  "value": "987654321",
-                  "description": "Take profit order ID to cancel (optional)"
-                },
-                {
-                  "key": "sl_id",
-                  "value": "555555555",
-                  "description": "Stop loss order ID to cancel (optional)"
-                }
-              ]
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"contract\": \"BTC\",\n  \"size\": 0.1,\n  \"price\": 50000,\n  \"side\": \"sell\",\n  \"tif\": \"ioc\",\n  \"text\": \"close-order-001\",\n  \"reduce_only\": true,\n  \"close_position\": true,\n  \"autotrader_id\": \"autotrader-001\",\n  \"user_id\": \"user-001\",\n  \"exchange_id\": \"your_exchange_id_from_registration\"\n}"
             },
-            "description": "Cancel an open futures order and associated TP/SL orders. Replace the query parameters with actual order IDs from your trades."
+            "url": {
+              "raw": "{{local-baseUrl}}/hyperliquid/close-futures-position",
+              "host": ["{{local-baseUrl}}"],
+              "path": ["hyperliquid", "close-futures-position"]
+            },
+            "description": "Close a futures position on Hyperliquid"
           },
           "response": []
         },
         {
-          "name": "Get Order Details",
+          "name": "Whitelist Request",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"method\": \"POST\",\n  \"requestPath\": \"/info\",\n  \"payloadString\": \"{\\\"type\\\": \\\"clearinghouseState\\\", \\\"user\\\": \\\"0xYourWalletAddress\\\"}\"\n}"
+            },
+            "url": {
+              "raw": "{{local-baseUrl}}/hyperliquid/whitelist-request",
+              "host": ["{{local-baseUrl}}"],
+              "path": ["hyperliquid", "whitelist-request"]
+            },
+            "description": "Make direct API calls to Hyperliquid (playground endpoint for testing)"
+          },
+          "response": []
+        },
+        {
+          "name": "Check Account State",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{local-baseUrl}}/hyperliquid/account/0xYourWalletAddress",
+              "host": ["{{local-baseUrl}}"],
+              "path": ["hyperliquid", "account", "0xYourWalletAddress"]
+            },
+            "description": "Check account state for debugging agent authorization"
+          },
+          "response": []
+        }
+      ]
+    },
+    {
+      "name": "Server-Sent Events (SSE)",
+      "description": "Real-time order updates via Server-Sent Events",
+      "item": [
+        {
+          "name": "Subscribe to Order Updates",
           "request": {
             "method": "GET",
             "header": [
               {
-                "key": "Content-Type",
-                "value": "application/json"
-              },
-              {
-                "key": "api-key",
-                "value": "{{apiKey}}"
-              },
-              {
-                "key": "api-secret",
-                "value": "{{apiSecret}}"
+                "key": "Accept",
+                "value": "text/event-stream"
               }
             ],
             "url": {
-              "raw": "{{baseUrl}}/gate/get-futures-order?trade_id=123456789",
-              "host": ["{{baseUrl}}"],
-              "path": ["gate", "get-futures-order"],
-              "query": [
-                {
-                  "key": "trade_id",
-                  "value": "123456789",
-                  "description": "The order ID to retrieve details for"
-                }
-              ]
+              "raw": "{{local-baseUrl}}/sse/sse/orders/user-001",
+              "host": ["{{local-baseUrl}}"],
+              "path": ["sse", "sse", "orders", "user-001"]
             },
-            "description": "Retrieve details of a specific futures order. Replace the trade_id parameter with an actual order ID."
+            "description": "Subscribe to real-time order updates for a specific user via SSE"
           },
           "response": []
         }
       ]
     },
     {
-      "name": "Examples - Market Orders",
-      "description": "Example requests for different market scenarios",
+      "name": "Autotrader Management",
+      "description": "Manage autotraders for automated trading",
       "item": [
         {
-          "name": "Market Long with TP/SL",
+          "name": "Create Autotrader",
           "request": {
             "method": "POST",
             "header": [
               {
                 "key": "Content-Type",
                 "value": "application/json"
-              },
-              {
-                "key": "api-key",
-                "value": "{{apiKey}}"
-              },
-              {
-                "key": "api-secret",
-                "value": "{{apiSecret}}"
               }
             ],
             "body": {
               "mode": "raw",
-              "raw": "{\n  \"market_type\": \"market\",\n  \"price\": 0,\n  \"contract\": \"ETH_USDT\",\n  \"leverage\": 5,\n  \"leverage_type\": \"ISOLATED\",\n  \"size\": 500,\n  \"position_type\": \"long\",\n  \"take_profit\": {\n    \"enabled\": true,\n    \"price\": \"3500\",\n    \"price_type\": \"last\"\n  },\n  \"stop_loss\": {\n    \"enabled\": true,\n    \"price\": \"2800\",\n    \"price_type\": \"last\"\n  }\n}"
+              "raw": "{\n  \"name\": \"BTC Scalper\",\n  \"description\": \"Scalping strategy for BTC\",\n  \"strategy_type\": \"scalping\",\n  \"exchange_id\": \"your_exchange_id\",\n  \"user_id\": \"user-001\",\n  \"initial_balance\": 1000,\n  \"risk_per_trade\": 0.02,\n  \"max_drawdown\": 0.1,\n  \"status\": \"active\",\n  \"config\": {\n    \"timeframe\": \"5m\",\n    \"indicators\": [\"rsi\", \"macd\"]\n  }\n}"
             },
             "url": {
-              "raw": "{{baseUrl}}/gate/place-futures-order",
-              "host": ["{{baseUrl}}"],
-              "path": ["gate", "place-futures-order"]
+              "raw": "{{local-baseUrl}}/autotraders",
+              "host": ["{{local-baseUrl}}"],
+              "path": ["autotraders"]
             },
-            "description": "Example: Market buy for ETH with 5x leverage, take profit at 3500, stop loss at 2800"
+            "description": "Create a new autotrader"
           },
           "response": []
         },
         {
-          "name": "Limit Short with TP/SL",
+          "name": "Get Autotrader by ID",
           "request": {
-            "method": "POST",
-            "header": [
-              {
-                "key": "Content-Type",
-                "value": "application/json"
-              },
-              {
-                "key": "api-key",
-                "value": "{{apiKey}}"
-              },
-              {
-                "key": "api-secret",
-                "value": "{{apiSecret}}"
-              }
-            ],
-            "body": {
-              "mode": "raw",
-              "raw": "{\n  \"market_type\": \"limit\",\n  \"price\": 52000.0,\n  \"contract\": \"BTC_USDT\",\n  \"leverage\": 3,\n  \"leverage_type\": \"CROSS\",\n  \"size\": 2000,\n  \"position_type\": \"short\",\n  \"take_profit\": {\n    \"enabled\": true,\n    \"price\": \"48000\",\n    \"price_type\": \"mark\"\n  },\n  \"stop_loss\": {\n    \"enabled\": true,\n    \"price\": \"55000\",\n    \"price_type\": \"mark\"\n  }\n}"
-            },
+            "method": "GET",
+            "header": [],
             "url": {
-              "raw": "{{baseUrl}}/gate/place-futures-order",
-              "host": ["{{baseUrl}}"],
-              "path": ["gate", "place-futures-order"]
+              "raw": "{{local-baseUrl}}/autotraders/autotrader-001",
+              "host": ["{{local-baseUrl}}"],
+              "path": ["autotraders", "autotrader-001"]
             },
-            "description": "Example: Limit short for BTC at 52000 with 3x cross margin, take profit at 48000, stop loss at 55000"
+            "description": "Retrieve autotrader details by ID"
           },
           "response": []
         },
         {
-          "name": "Close Short Position",
+          "name": "Update Autotrader Status",
+          "request": {
+            "method": "PATCH",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"status\": \"paused\"\n}"
+            },
+            "url": {
+              "raw": "{{local-baseUrl}}/autotraders/autotrader-001/status",
+              "host": ["{{local-baseUrl}}"],
+              "path": ["autotraders", "autotrader-001", "status"]
+            },
+            "description": "Update autotrader status (active, paused, stopped)"
+          },
+          "response": []
+        }
+      ]
+    },
+    {
+      "name": "Trading Plan Management",
+      "description": "Manage trading plans and trading plan pairs",
+      "item": [
+        {
+          "name": "Create Trading Plan",
           "request": {
             "method": "POST",
             "header": [
               {
                 "key": "Content-Type",
                 "value": "application/json"
-              },
-              {
-                "key": "api-key",
-                "value": "{{apiKey}}"
-              },
-              {
-                "key": "api-secret",
-                "value": "{{apiSecret}}"
               }
             ],
             "body": {
               "mode": "raw",
-              "raw": "{\n  \"contract\": \"ETH_USDT\",\n  \"auto_size\": \"close_short\"\n}"
+              "raw": "{\n  \"name\": \"BTC Swing Strategy\",\n  \"description\": \"Swing trading strategy for BTC\",\n  \"strategy_type\": \"swing\",\n  \"user_id\": \"user-001\",\n  \"visibility\": \"public\",\n  \"status\": \"active\",\n  \"config\": {\n    \"timeframe\": \"4h\",\n    \"risk_reward_ratio\": 2.5\n  }\n}"
             },
             "url": {
-              "raw": "{{baseUrl}}/gate/close-futures-order",
-              "host": ["{{baseUrl}}"],
-              "path": ["gate", "close-futures-order"]
+              "raw": "{{local-baseUrl}}/trading-plans",
+              "host": ["{{local-baseUrl}}"],
+              "path": ["trading-plans"]
             },
-            "description": "Example: Close a short position for ETH"
+            "description": "Create a new trading plan"
+          },
+          "response": []
+        },
+        {
+          "name": "Get Trading Plan by ID",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{local-baseUrl}}/trading-plans/plan-001",
+              "host": ["{{local-baseUrl}}"],
+              "path": ["trading-plans", "plan-001"]
+            },
+            "description": "Retrieve trading plan details by ID"
+          },
+          "response": []
+        },
+        {
+          "name": "Update Trading Plan Status",
+          "request": {
+            "method": "PATCH",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"status\": \"paused\"\n}"
+            },
+            "url": {
+              "raw": "{{local-baseUrl}}/trading-plans/plan-001/status",
+              "host": ["{{local-baseUrl}}"],
+              "path": ["trading-plans", "plan-001", "status"]
+            },
+            "description": "Update trading plan status"
           },
           "response": []
         }
       ]
     }
-  ],
-  "event": [
-    {
-      "listen": "prerequest",
-      "script": {
-        "type": "text/javascript",
-        "exec": [
-          "// Pre-request script for Byscript Connector API",
-          "console.log('Testing Byscript Connector API');"
-        ]
-      }
-    },
-    {
-      "listen": "test",
-      "script": {
-        "type": "text/javascript",
-        "exec": [
-          "// Test script for Byscript Connector API",
-          "pm.test(\"Status code is 200\", function () {",
-          "    pm.response.to.have.status(200);",
-          "});",
-          "",
-          "pm.test(\"Response has success message\", function () {",
-          "    var jsonData = pm.response.json();",
-          "    pm.expect(jsonData.message).to.eql(\"ok\");",
-          "});"
-        ]
-      }
-    }
-  ],
-  "auth": null
+  ]
 }

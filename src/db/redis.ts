@@ -30,3 +30,5 @@ redis.ping()
   .catch(err => console.error('❌ Redis ping failed:', err));
 
 export default redis;
+
+
