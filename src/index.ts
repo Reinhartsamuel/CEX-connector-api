@@ -1,7 +1,9 @@
 import { Hono } from 'hono'
+import { cors } from 'hono/cors'
 import gateRouter from './routes/gateRoutes'
 import sseRouter from './routes/sseRoutes'
 import { logger } from 'hono/logger'
+import userRouter from './routes/userRoutes'
 import { client, closeConnection, testConnection } from './db/client'
 import redis from './db/redis'
 import okxRouter from './routes/okxRoutes'
@@ -11,15 +13,21 @@ import hyperliquidRouter from './routes/hyperliquidRoutes'
 import tokocryptoRouter from './routes/tokocryptoRoutes'
 
 const app = new Hono()
-// app.use('*', async (c, next) => {
-//   // If the path is /health, just skip the logger and go to the next middleware
-//   if (c.req.path === '/health' || c.req.path === '/health-async') {
-//     await next()
-//   } else {
-//     // Otherwise, use the standard Hono logger
-//     await logger()(c, next)
-//   }
-// })
+app.use('*', cors({
+  origin: process.env.CORS_ORIGIN || 'http://localhost:5173',
+  allowMethods: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS'],
+  allowHeaders: ['Content-Type', 'Authorization'],
+  credentials:true
+}))
+app.use('*', async (c, next) => {
+  // If the path is /health, just skip the logger and go to the next middleware
+  if (c.req.path === '/health' || c.req.path === '/health-async') {
+    await next()
+  } else {
+    // Otherwise, use the standard Hono logger
+    await logger()(c, next)
+  }
+})
 app.get('/', (c) => {
   return c.text('Hello Hono!')
 })
@@ -31,6 +39,7 @@ app.route('/tokocrypto', tokocryptoRouter)
 
 
 app.route('/sse', sseRouter)
+app.route('/user', userRouter)
 app.route('/autotraders', autotraderRouter)
 app.route('/trading-plans', tradingPlanRouter)
 

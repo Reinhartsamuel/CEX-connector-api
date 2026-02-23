@@ -86,6 +86,117 @@ export const GateHandler = {
       exchange_user_id: exchange.exchange_user_id,
     };
   },
+
+    registerUser: async function (c: Context) {
+    try {
+      const body = (await c.req.json()) as z.infer<
+        typeof gateRegisterUserSchema
+      >;
+      const { user_id } = body;
+
+      let api_key: string | undefined = body.api_key;
+      let api_secret: string | undefined = body.api_secret;
+
+      // ---- Validate credentials with Gate BEFORE storing ----
+      GateServices.initialize(api_key, api_secret);
+
+      const futuresAccount = await GateServices.whitelistedRequest({
+        method: "GET",
+        urlPath: "/api/v4/futures/usdt/accounts",
+        queryString: "",
+        payload: undefined,
+      });
+
+      if (futuresAccount.status === "error") {
+        return c.json(futuresAccount, { status: futuresAccount.statusCode });
+      }
+
+      const account = await GateServices.whitelistedRequest({
+        method: "GET",
+        urlPath: "/api/v4/account/detail",
+        queryString: "",
+        payload: undefined,
+      });
+      console.log(account?.user_id,'account?.user_id')
+
+      if (account.status === "error") {
+        return c.json(account, { status: account.statusCode });
+      }
+
+
+      // find first exchange where exchange_user_id is account?.user_id
+      const foundExchange = await postgresDb.query.exchanges.findFirst({
+        where: eq(exchanges.exchange_user_id, account.user_id),
+      });
+
+      if (foundExchange) {
+        return c.json({ message: "This Gate.io account already registered, cannot register duplicate account" }, { status: 400 });
+      }
+
+      // ---- Encrypt credentials (KMS GenerateDataKey happens here) ----
+      const {
+        encryptedDEK,
+        apiKey: encryptedApiKey,
+        apiSecret: encryptedApiSecret,
+      } = await generateAndEncryptCredentials(api_key, api_secret);
+
+      // Serialize AES payloads for DB
+      const apiKeyCiphertext = JSON.stringify(encryptedApiKey);
+      const apiSecretCiphertext = JSON.stringify(encryptedApiSecret);
+
+      // TODO: DELETE BEFORE PUSHING
+      const dekResp = await kmsClient.send(
+        new DecryptCommand({
+          CiphertextBlob: encryptedDEK,
+          EncryptionAlgorithm: "SYMMETRIC_DEFAULT",
+        }),
+      );
+      if (!dekResp.Plaintext) throw new Error("KMS decrypt failed");
+
+      const plaintextDEK = Buffer.from(dekResp.Plaintext);
+
+      const decryptedApiKey = decrypt(
+        JSON.parse(apiKeyCiphertext),
+        plaintextDEK,
+      );
+
+      // zero
+      plaintextDEK.fill(0);
+
+      // ---- ZERO plaintext ASAP ----
+      api_key = undefined;
+      api_secret = undefined;
+
+      // ---- Persist encrypted data ----
+      const [exchange] = await postgresDb
+        .insert(exchanges)
+        .values({
+          user_id,
+          exchange_title: "gate",
+          exchange_user_id: account.user_id,
+          market_type: "futures",
+
+          api_key_encrypted: apiKeyCiphertext,
+          api_secret_encrypted: apiSecretCiphertext,
+          enc_dek: encryptedDEK, // BYTEA
+        })
+        .returning();
+
+      return c.json({
+        message: "Gate exchange account registered successfully",
+        exchange,
+      });
+    } catch (e) {
+      console.error(e, "ERROR REGISTER GATE USER");
+      if (e instanceof Error) {
+        return c.json({ message: "ERROR!", error: e.message }, { status: 500 });
+      }
+      return c.json(
+        { message: "ERROR!", error: "UNKNOWN ERROR" },
+        { status: 500 },
+      );
+    }
+  },
   futuresOrder: async function (c: Context) {
     try {
       const body = (await c.req.json()) as z.infer<
@@ -765,105 +876,7 @@ export const GateHandler = {
       );
     }
   },
-  registerUser: async function (c: Context) {
-    try {
-      const body = (await c.req.json()) as z.infer<
-        typeof gateRegisterUserSchema
-      >;
-      const { user_id } = body;
 
-      let api_key: string | undefined = body.api_key;
-      let api_secret: string | undefined = body.api_secret;
-
-      // ---- Validate credentials with Gate BEFORE storing ----
-      GateServices.initialize(api_key, api_secret);
-
-      const futuresAccount = await GateServices.whitelistedRequest({
-        method: "GET",
-        urlPath: "/api/v4/futures/usdt/accounts",
-        queryString: "",
-        payload: undefined,
-      });
-
-      if (futuresAccount.status === "error") {
-        return c.json(futuresAccount, { status: futuresAccount.statusCode });
-      }
-
-      const account = await GateServices.whitelistedRequest({
-        method: "GET",
-        urlPath: "/api/v4/account/detail",
-        queryString: "",
-        payload: undefined,
-      });
-
-      if (account.status === "error") {
-        return c.json(account, { status: account.statusCode });
-      }
-
-      // ---- Encrypt credentials (KMS GenerateDataKey happens here) ----
-      const {
-        encryptedDEK,
-        apiKey: encryptedApiKey,
-        apiSecret: encryptedApiSecret,
-      } = await generateAndEncryptCredentials(api_key, api_secret);
-
-      // Serialize AES payloads for DB
-      const apiKeyCiphertext = JSON.stringify(encryptedApiKey);
-      const apiSecretCiphertext = JSON.stringify(encryptedApiSecret);
-
-      // TODO: DELETE BEFORE PUSHING
-      const dekResp = await kmsClient.send(
-        new DecryptCommand({
-          CiphertextBlob: encryptedDEK,
-          EncryptionAlgorithm: "SYMMETRIC_DEFAULT",
-        }),
-      );
-      if (!dekResp.Plaintext) throw new Error("KMS decrypt failed");
-
-      const plaintextDEK = Buffer.from(dekResp.Plaintext);
-
-      const decryptedApiKey = decrypt(
-        JSON.parse(apiKeyCiphertext),
-        plaintextDEK,
-      );
-
-      // zero
-      plaintextDEK.fill(0);
-
-      // ---- ZERO plaintext ASAP ----
-      api_key = undefined;
-      api_secret = undefined;
-
-      // ---- Persist encrypted data ----
-      const [exchange] = await postgresDb
-        .insert(exchanges)
-        .values({
-          user_id,
-          exchange_title: "gate",
-          exchange_user_id: account.user_id,
-          market_type: "futures",
-
-          api_key_encrypted: apiKeyCiphertext,
-          api_secret_encrypted: apiSecretCiphertext,
-          enc_dek: encryptedDEK, // BYTEA
-        })
-        .returning();
-
-      return c.json({
-        message: "ok",
-        exchange,
-      });
-    } catch (e) {
-      console.error(e, "ERROR REGISTER GATE USER");
-      if (e instanceof Error) {
-        return c.json({ message: "ERROR!", error: e.message }, { status: 500 });
-      }
-      return c.json(
-        { message: "ERROR!", error: "UNKNOWN ERROR" },
-        { status: 500 },
-      );
-    }
-  },
 
   playground: async function (c: Context) {
     try {

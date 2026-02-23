@@ -378,6 +378,8 @@ async function handleUserFill(userId: string, fillData: WsUserFills) {
       `💰 FILLS UPDATE user=${userId} count=${fillData.fills.length}`,
     );
 
+    console.log(JSON.stringify(fillData, null, 2), "fillData")
+
     // Process each fill
     await Promise.all(
       fillData.fills.map(async (fill: WsFill) => {

@@ -390,6 +390,7 @@ export const HyperliquidHandler = {
           eq(trades.autotrader_id, body.autotrader_id),
           eq(trades.contract, body.contract),
           eq(trades.status, "waiting_position"), // Only cancel resting orders
+          eq(trades.position_type, body.position_type), // only cancel long/short orders
         ),
       });
 
@@ -405,7 +406,7 @@ export const HyperliquidHandler = {
             trade.contract,
             Number(trade.order_id),
           );
-          return { ...res, id: trade.id };
+          return { ...res, id: trade.id, user_id: trade.user_id };
         }),
       );
 
