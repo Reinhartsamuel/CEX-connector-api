@@ -4,13 +4,13 @@ import { zValidator } from '@hono/zod-validator';
 import { z } from 'zod';
 import { firebaseAuth } from '../utils/firebaseAdmin';
 import { postgresDb } from '../db/client';
-import { users, trades, exchanges, autotraders, user_balances_snapshots } from '../db/schema';
-import { and, eq, gte, lte, desc, sql, gt, isNotNull } from 'drizzle-orm';
+import { users, trades, exchanges, autotraders, user_balances_snapshots, trading_plans, trading_plan_pairs } from '../db/schema';
+import { and, eq, gte, lte, desc, sql, gt, isNotNull, inArray } from 'drizzle-orm';
 import { validationErrorHandler } from '../middleware/validationErrorHandler';
 import { signToken } from '../utils/jwt';
 import { setCookie } from 'hono/cookie';
 import { accountsQuerySchema, dashboardQuerySchema, loginSchema, tradesQuerySchema } from '../schemas/userSchemas';
-import {jwt } from 'hono/jwt'
+import { jwt } from 'hono/jwt'
 
 const userRouter = new Hono();
 
@@ -114,9 +114,12 @@ userRouter.post(
 
 userRouter.get(
   '/dashboard',
+   jwt({ secret: process.env.JWT_SECRET! }),
   zValidator('query', dashboardQuerySchema, validationErrorHandler),
   async (c) => {
-    const { user_id, period } = c.req.valid('query');
+    const { period } = c.req.valid('query');
+    const payload = c.get('jwtPayload');
+    const user_id = payload.sub;
 
     const now = new Date();
     const periodStart = period === 'all' ? null : new Date(
@@ -307,76 +310,412 @@ userRouter.get(
 
 
 
-userRouter.get(
-  '/accounts',
-  jwt({ secret: process.env.JWT_SECRET! }),
+userRouter.get('/accounts',
+    jwt({ secret: process.env.JWT_SECRET! }),
   zValidator('query', accountsQuerySchema, validationErrorHandler),
-  async (c) => {
-    const q = c.req.valid('query');
+   async (c) => {
     const payload = c.get('jwtPayload');
-    const userIdFromToken = payload.sub;
+    const user_id = payload.sub;
 
-    const conditions = [eq(exchanges.user_id, userIdFromToken)];
-    if (q.market_type) conditions.push(eq(exchanges.market_type, q.market_type));
-    if (q.exchange_title) conditions.push(eq(exchanges.exchange_title, q.exchange_title));
+  // 1. Find the literal last time a snapshot was recorded for this user
+  const latestEntry = await postgresDb
+    .select({ created_at: user_balances_snapshots.created_at })
+    .from(user_balances_snapshots)
+    .where(eq(user_balances_snapshots.user_id, user_id))
+    .orderBy(desc(user_balances_snapshots.created_at))
+    .limit(1);
 
-    // Fetch exchanges with their related autotraders and latest balances
+  if (latestEntry.length === 0) {
+    // If no snapshots exist, we should still return the exchanges 
+    // but with 0 balances so the UI doesn't look broken.
+    const userExchanges = await postgresDb
+      .select()
+      .from(exchanges)
+      .where(eq(exchanges.user_id, user_id));
+      
+    return c.json({ data: userExchanges.map(ex => ({ ...ex, value: 0 })) });
+  }
+
+  const T0 = latestEntry[0].created_at;
+
+  // 2. Modified helper: Use T0 (the actual last cron time) as the anchor
+  const getSnapshotAt = (daysAgo: number, alias: string) => {
+    return postgresDb
+      .select({
+        exchange_id: user_balances_snapshots.exchange_id,
+        total: sql<number>`sum(${user_balances_snapshots.balance})`.mapWith(Number),
+      })
+      .from(user_balances_snapshots)
+      .where(and(
+        eq(user_balances_snapshots.user_id, user_id),
+        // Look for the snapshot that happened exactly N days before the latest one
+        // We use a 4-hour window to be safe if the cron took a while to run
+        sql`${user_balances_snapshots.created_at} BETWEEN (${T0}::timestamp - interval '${daysAgo} days' - interval '2 hours') 
+            AND (${T0}::timestamp - interval '${daysAgo} days' + interval '2 hours')`
+      ))
+      .groupBy(user_balances_snapshots.exchange_id)
+      .as(alias);
+  };
+
+  const current = getSnapshotAt(0, 'curr');
+  const d1 = getSnapshotAt(1, 'd1');
+  const d7 = getSnapshotAt(7, 'd7');
+  const d30 = getSnapshotAt(30, 'd30');
+
     const results = await postgresDb
       .select({
         exchange: exchanges,
-        // Count active autotraders for this specific exchange
-        autotraderCount: sql<number>`count(distinct ${autotraders.id})`,
-        // Sum total balance for this exchange
-        totalValue: sql<number>`coalesce(sum(${user_balances_snapshots.balance}), 0)`,
+        autotraderCount: sql<number>`(SELECT count(*) FROM ${autotraders} WHERE ${autotraders.exchange_id} = ${exchanges.id})`.mapWith(Number),
+        valCurr: current.total,
+        val1D: d1.total,
+        val7D: d7.total,
+        val30D: d30.total,
       })
       .from(exchanges)
-      .leftJoin(autotraders, eq(autotraders.exchange_id, exchanges.id))
-      .leftJoin(user_balances_snapshots, eq(user_balances_snapshots.exchange_id, exchanges.id))
-      .where(and(...conditions))
-      .groupBy(exchanges.id)
-      .orderBy(desc(exchanges.created_at))
-      .limit(q.limit)
-      .offset(q.offset);
+      .leftJoin(current, eq(exchanges.id, current.exchange_id))
+      .leftJoin(d1, eq(exchanges.id, d1.exchange_id))
+      .leftJoin(d7, eq(exchanges.id, d7.exchange_id))
+      .leftJoin(d30, eq(exchanges.id, d30.exchange_id))
+      .where(eq(exchanges.user_id, user_id));
 
-    // Map DB results to the Frontend "AccountTableRow" interface
-    const formattedData = results.map((row) => {
-      const { exchange, autotraderCount, totalValue } = row;
+    // 3. Fetch Asset Distribution (per currency) for the "Assets" bar
+    const assetsDistribution = await postgresDb
+      .select({
+        exchange_id: user_balances_snapshots.exchange_id,
+        currency: user_balances_snapshots.currency,
+        balance: user_balances_snapshots.balance,
+      })
+      .from(user_balances_snapshots)
+      .where(and(
+        eq(user_balances_snapshots.user_id, user_id),
+        sql`${user_balances_snapshots.created_at} > now() - interval '2 hours'`
+      ));
+
+    // 4. Final Format to match AccountTableRow frontend interface
+    const data = results.map((row) => {
+      const curr = row.valCurr || 0;
+
+      const calcChange = (prev: number | null) =>
+        prev && prev > 0 ? parseFloat((((curr - prev) / prev) * 100).toFixed(2)) : 0;
+
+      // Filter assets for this specific exchange and map colors
+      const exchangeAssets = assetsDistribution
+        .filter(a => a.exchange_id === row.exchange.id)
+        .map(a => ({
+          color: a.currency === 'USDT' ? '#4ade80' : a.currency === 'BTC' ? '#f59e0b' : '#60a5fa',
+          pct: curr > 0 ? (Number(a.balance) / curr) * 100 : 0
+        }));
 
       return {
-        id: exchange.id.toString(),
-        name: exchange.exchange_title.toUpperCase(), // e.g., 'BINANCE'
-        subName: exchange.exchange_user_id,          // e.g., User ID or Email
-        value: Number(totalValue),
-        
-        // These snapshots would usually require a subquery comparing 
-        // current user_pnl_snapshots vs 24h ago. 
-        // Hardcoded as 0 or mock for now to match interface.
-        change1D: 0.0, 
-        change7D: 0.0,
-        change30D: 0.0,
-        
-        autotraderCount: Number(autotraderCount),
-        market: exchange.market_type || 'spot',
-        provider: exchange.exchange_title,
-        autotrader: Number(autotraderCount) > 0 ? 'Active' : 'None',
-        
-        // Generates the "Assets" bar data
-        // In a real app, you'd calculate this from user_balances_snapshots per currency
-        assets: [
-          { color: '#4ade80', pct: 70 }, // USDT
-          { color: '#60a5fa', pct: 30 }, // Others
-        ],
+        id: row.exchange.id.toString(),
+        name: row.exchange.exchange_title.toUpperCase(),
+        subName: row.exchange.exchange_user_id,
+        value: curr,
+        change1D: calcChange(row.val1D),
+        change7D: calcChange(row.val7D),
+        change30D: calcChange(row.val30D),
+        autotraderCount: row.autotraderCount,
+        market: row.exchange.market_type || 'spot',
+        provider: row.exchange.exchange_title,
+        autotrader: row.autotraderCount > 0 ? 'Active' : 'None',
+        assets: exchangeAssets.length > 0 ? exchangeAssets : [{ color: '#333', pct: 100 }]
       };
     });
 
+    return c.json({ data });
+  });
+
+// GET /autotraders — list all autotraders for the authenticated user
+userRouter.get('/autotraders',
+  jwt({ secret: process.env.JWT_SECRET! }),
+  async (c) => {
+    const payload = c.get('jwtPayload');
+    const user_id = Number(payload.sub);
+
+    const results = await postgresDb
+      .select({
+        id: autotraders.id,
+        exchange_id: autotraders.exchange_id,
+        trading_plan_id: autotraders.trading_plan_id,
+        market: autotraders.market,
+        pair: autotraders.pair,
+        symbol: autotraders.symbol,
+        status: autotraders.status,
+        initial_investment: autotraders.initial_investment,
+        current_balance: autotraders.current_balance,
+        leverage: autotraders.leverage,
+        leverage_type: autotraders.leverage_type,
+        margin_mode: autotraders.margin_mode,
+        position_mode: autotraders.position_mode,
+        autocompound: autotraders.autocompound,
+        created_at: autotraders.created_at,
+        exchange_title: exchanges.exchange_title,
+        trading_plan_name: trading_plans.name,
+      })
+      .from(autotraders)
+      .innerJoin(exchanges, eq(autotraders.exchange_id, exchanges.id))
+      .leftJoin(trading_plans, eq(autotraders.trading_plan_id, trading_plans.id))
+      .where(eq(autotraders.user_id, user_id))
+      .orderBy(desc(autotraders.created_at));
+
+    return c.json({ data: results });
+  }
+);
+
+// GET /trading-plans — list all trading plans owned by the authenticated user
+userRouter.get('/trading-plans',
+  jwt({ secret: process.env.JWT_SECRET! }),
+  async (c) => {
+    const payload = c.get('jwtPayload');
+    const user_id = Number(payload.sub);
+
+    const plans = await postgresDb
+      .select()
+      .from(trading_plans)
+      .where(eq(trading_plans.owner_user_id, user_id))
+      .orderBy(desc(trading_plans.created_at));
+
+    const planIds = plans.map((p) => p.id);
+
+    let pairs: typeof trading_plan_pairs.$inferSelect[] = [];
+    if (planIds.length > 0) {
+      pairs = await postgresDb
+        .select()
+        .from(trading_plan_pairs)
+        .where(inArray(trading_plan_pairs.trading_plan_id, planIds));
+    }
+
+    const data = plans.map((plan) => ({
+      ...plan,
+      pairs: pairs.filter((p) => p.trading_plan_id === plan.id),
+    }));
+
+    return c.json({ data });
+  }
+);
+
+// POST /trading-plans — create a new trading plan with pairs
+userRouter.post('/trading-plans',
+  jwt({ secret: process.env.JWT_SECRET! }),
+  async (c) => {
+    const payload = c.get('jwtPayload');
+    const user_id = Number(payload.sub);
+    const body = await c.req.json();
+
+    const { name, description, strategy, visibility, pairs } = body;
+
+    const [plan] = await postgresDb
+      .insert(trading_plans)
+      .values({
+        owner_user_id: user_id,
+        name,
+        description: description ?? null,
+        strategy: strategy ?? null,
+        visibility: visibility ?? 'PRIVATE',
+      })
+      .returning();
+
+    if (pairs && pairs.length > 0) {
+      await postgresDb.insert(trading_plan_pairs).values(
+        pairs.map((p: { base_asset: string; quote_asset: string; symbol: string }) => ({
+          trading_plan_id: plan.id,
+          base_asset: p.base_asset,
+          quote_asset: p.quote_asset,
+          symbol: p.symbol,
+        }))
+      );
+    }
+
+    const insertedPairs = await postgresDb
+      .select()
+      .from(trading_plan_pairs)
+      .where(eq(trading_plan_pairs.trading_plan_id, plan.id));
+
+    return c.json({ data: { ...plan, pairs: insertedPairs } }, 201);
+  }
+);
+
+// POST /autotraders — create one or more autotraders (one per pair)
+userRouter.post('/autotraders',
+  jwt({ secret: process.env.JWT_SECRET! }),
+  async (c) => {
+    const payload = c.get('jwtPayload');
+    const user_id = Number(payload.sub);
+    const body = await c.req.json();
+
+    const { exchange_id, trading_plan_id, market, pairs } = body;
+
+    const inserted = await postgresDb
+      .insert(autotraders)
+      .values(
+        pairs.map((p: {
+          symbol: string;
+          pair: string;
+          initial_investment: string;
+          leverage: number;
+          leverage_type: string;
+          margin_mode: string;
+          position_mode: string;
+        }) => ({
+          user_id,
+          exchange_id,
+          trading_plan_id,
+          market,
+          market_code: null,
+          pair: p.pair,
+          symbol: p.symbol,
+          initial_investment: p.initial_investment,
+          current_balance: p.initial_investment,
+          leverage: p.leverage,
+          leverage_type: p.leverage_type,
+          margin_mode: p.margin_mode,
+          position_mode: p.position_mode,
+          status: 'stopped',
+        }))
+      )
+      .returning();
+
+    return c.json({ data: inserted }, 201);
+  }
+);
+
+// GET /autotraders/:id — get a single autotrader with trade stats
+userRouter.get('/autotraders/:id',
+  jwt({ secret: process.env.JWT_SECRET! }),
+  async (c) => {
+    const payload = c.get('jwtPayload');
+    const user_id = Number(payload.sub);
+    const autotrader_id = Number(c.req.param('id'));
+
+    // Fetch autotrader with exchange info
+    const [autotrader] = await postgresDb
+      .select({
+        id: autotraders.id,
+        exchange_id: autotraders.exchange_id,
+        trading_plan_id: autotraders.trading_plan_id,
+        market: autotraders.market,
+        pair: autotraders.pair,
+        symbol: autotraders.symbol,
+        status: autotraders.status,
+        initial_investment: autotraders.initial_investment,
+        current_balance: autotraders.current_balance,
+        leverage: autotraders.leverage,
+        leverage_type: autotraders.leverage_type,
+        margin_mode: autotraders.margin_mode,
+        position_mode: autotraders.position_mode,
+        autocompound: autotraders.autocompound,
+        created_at: autotraders.created_at,
+        exchange_title: exchanges.exchange_title,
+        trading_plan_name: trading_plans.name,
+      })
+      .from(autotraders)
+      .innerJoin(exchanges, eq(autotraders.exchange_id, exchanges.id))
+      .leftJoin(trading_plans, eq(autotraders.trading_plan_id, trading_plans.id))
+      .where(and(eq(autotraders.id, autotrader_id), eq(autotraders.user_id, user_id)))
+      .limit(1);
+
+    if (!autotrader) {
+      return c.json({ error: 'Autotrader not found' }, 404);
+    }
+
+    // Trade stats for this autotrader
+    const [stats] = await postgresDb.execute(sql`
+      SELECT
+        COUNT(*)::int                                                    AS total_trades,
+        COALESCE(SUM(CASE WHEN pnl::numeric > 0 THEN pnl::numeric ELSE 0 END), 0) AS total_profit,
+        COALESCE(SUM(CASE WHEN pnl::numeric < 0 THEN ABS(pnl::numeric) ELSE 0 END), 0) AS total_loss,
+        COALESCE(SUM(pnl::numeric), 0)                                  AS total_pnl,
+        SUM(CASE WHEN pnl::numeric > 0 THEN 1 ELSE 0 END)::int         AS winning_trades,
+        COUNT(CASE WHEN status = 'open' THEN 1 END)::int                AS pending_orders,
+        CASE WHEN COUNT(*) > 0
+          THEN ROUND((SUM(CASE WHEN pnl::numeric > 0 THEN 1 ELSE 0 END)::numeric / COUNT(*)) * 100, 2)
+          ELSE 0
+        END                                                              AS win_rate,
+        CASE WHEN SUM(CASE WHEN pnl::numeric < 0 THEN ABS(pnl::numeric) ELSE 0 END) > 0
+          THEN ROUND(SUM(CASE WHEN pnl::numeric > 0 THEN pnl::numeric ELSE 0 END) / SUM(CASE WHEN pnl::numeric < 0 THEN ABS(pnl::numeric) ELSE 0 END), 2)
+          ELSE 0
+        END                                                              AS profit_factor
+      FROM ${trades}
+      WHERE autotrader_id = ${autotrader_id}
+        AND user_id = ${user_id}
+        AND is_tpsl = false
+    `) as any;
+
     return c.json({
-      data: formattedData,
-      pagination: {
-        total: formattedData.length, // Ideally use the totalResult count from before
-        limit: q.limit,
-        offset: q.offset,
+      data: {
+        ...autotrader,
+        total_trades: Number(stats?.total_trades ?? 0),
+        total_profit: Number(stats?.total_profit ?? 0),
+        total_loss: Number(stats?.total_loss ?? 0),
+        total_pnl: Number(stats?.total_pnl ?? 0),
+        winning_trades: Number(stats?.winning_trades ?? 0),
+        pending_orders: Number(stats?.pending_orders ?? 0),
+        win_rate: Number(stats?.win_rate ?? 0),
+        profit_factor: Number(stats?.profit_factor ?? 0),
       },
     });
+  }
+);
+
+// GET /autotraders/:id/trades — get recent trades for an autotrader
+userRouter.get('/autotraders/:id/trades',
+  jwt({ secret: process.env.JWT_SECRET! }),
+  async (c) => {
+    const payload = c.get('jwtPayload');
+    const user_id = Number(payload.sub);
+    const autotrader_id = Number(c.req.param('id'));
+
+    const results = await postgresDb
+      .select({
+        id: trades.id,
+        trade_id: trades.trade_id,
+        contract: trades.contract,
+        position_type: trades.position_type,
+        market_type: trades.market_type,
+        size: trades.size,
+        price: trades.price,
+        leverage: trades.leverage,
+        leverage_type: trades.leverage_type,
+        status: trades.status,
+        position_status: trades.position_status,
+        pnl: trades.pnl,
+        pnl_margin: trades.pnl_margin,
+        open_fill_price: trades.open_fill_price,
+        close_fill_price: trades.close_fill_price,
+        created_at: trades.created_at,
+        updated_at: trades.updated_at,
+      })
+      .from(trades)
+      .where(and(
+        eq(trades.autotrader_id, autotrader_id),
+        eq(trades.user_id, user_id),
+        eq(trades.is_tpsl, false),
+      ))
+      .orderBy(desc(trades.created_at))
+      .limit(10);
+
+    return c.json({ data: results });
+  }
+);
+
+// DELETE /autotraders/:id — delete an autotrader
+userRouter.delete('/autotraders/:id',
+  jwt({ secret: process.env.JWT_SECRET! }),
+  async (c) => {
+    const payload = c.get('jwtPayload');
+    const user_id = Number(payload.sub);
+    const autotrader_id = Number(c.req.param('id'));
+
+    const [deleted] = await postgresDb
+      .delete(autotraders)
+      .where(and(eq(autotraders.id, autotrader_id), eq(autotraders.user_id, user_id)))
+      .returning({ id: autotraders.id });
+
+    if (!deleted) {
+      return c.json({ error: 'Autotrader not found' }, 404);
+    }
+
+    return c.json({ success: true, id: deleted.id });
   }
 );
 
