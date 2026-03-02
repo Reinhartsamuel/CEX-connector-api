@@ -2,13 +2,11 @@ import { z } from 'zod';
 
 
 export const dashboardQuerySchema = z.object({
-  user_id: z.coerce.number().int().positive(),
   period: z.string().toLowerCase().pipe(z.enum(['7d', '30d', '90d', 'all'])).default('7d'),
 });
 
 
 export const tradesQuerySchema = z.object({
-  user_id: z.coerce.number().int().positive(),
   exchange_id: z.coerce.number().int().positive().optional(),
   market_type: z.string().optional(),
   contract: z.string().optional(),

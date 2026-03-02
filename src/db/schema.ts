@@ -79,6 +79,7 @@ export const autotraders = pgTable('autotraders', {
   leverage_type: text('leverage_type'),
   autocompound:boolean('autocompound').default(false),
   current_balance: decimal('current_balance', { precision: 10, scale: 2 }).notNull(),
+  webhook_token: text('webhook_token').unique(), // unique token for webhook authentication (TradingView alerts)
 }, (table) => {
   return {
     unique_user_exchange_plan_symbol: unique().on(table.user_id, table.exchange_id, table.trading_plan_id, table.symbol),

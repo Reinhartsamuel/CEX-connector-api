@@ -449,6 +449,7 @@ userRouter.get('/autotraders',
         position_mode: autotraders.position_mode,
         autocompound: autotraders.autocompound,
         created_at: autotraders.created_at,
+        webhook_token: autotraders.webhook_token,
         exchange_title: exchanges.exchange_title,
         trading_plan_name: trading_plans.name,
       })
@@ -571,6 +572,7 @@ userRouter.post('/autotraders',
           margin_mode: p.margin_mode,
           position_mode: p.position_mode,
           status: 'stopped',
+          webhook_token: crypto.randomUUID(),
         }))
       )
       .returning();
@@ -605,6 +607,7 @@ userRouter.get('/autotraders/:id',
         position_mode: autotraders.position_mode,
         autocompound: autotraders.autocompound,
         created_at: autotraders.created_at,
+        webhook_token: autotraders.webhook_token,
         exchange_title: exchanges.exchange_title,
         trading_plan_name: trading_plans.name,
       })

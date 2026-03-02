@@ -11,6 +11,7 @@ import autotraderRouter from './routes/autotraderRoutes'
 import tradingPlanRouter from './routes/tradingPlanRoutes'
 import hyperliquidRouter from './routes/hyperliquidRoutes'
 import tokocryptoRouter from './routes/tokocryptoRoutes'
+import webhookRouter from './routes/webhookRoutes'
 
 const app = new Hono()
 app.use('*', cors({
@@ -38,6 +39,7 @@ app.route('/tokocrypto', tokocryptoRouter)
 
 
 
+app.route('/webhook', webhookRouter)
 app.route('/sse', sseRouter)
 app.route('/user', userRouter)
 app.route('/autotraders', autotraderRouter)
