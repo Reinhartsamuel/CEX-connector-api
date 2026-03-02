@@ -1,8 +1,24 @@
 import type { Autotrader, Exchange } from '../db/schema';
 
 export type SignalAction = 'BUY' | 'SELL' | 'CLOSE' | 'CANCEL';
+export type PriceType = 'mark' | 'last' | 'index';
+export type OrderType = 'market' | 'limit';
 
-// Everything the executor needs — all sourced from the autotrader config + decrypted creds
+// Optional per-signal overrides — everything else comes from the autotrader config
+export interface TpSlOverride {
+  enabled: boolean;
+  price: string;
+  price_type: PriceType;
+}
+
+export interface SignalOverrides {
+  order_type?: OrderType;   // default: 'market'
+  price?: number;           // required when order_type = 'limit'
+  take_profit?: TpSlOverride;
+  stop_loss?: TpSlOverride;
+}
+
+// Everything the executor needs — autotrader config + decrypted creds + signal overrides
 export interface ExecutorContext {
   autotrader: Autotrader;
   exchange: Exchange;
@@ -12,6 +28,7 @@ export interface ExecutorContext {
   encrypted_api_key: string;
   encrypted_api_secret: string;
   action: SignalAction;
+  overrides: SignalOverrides;
 }
 
 export interface ExecutorResult {

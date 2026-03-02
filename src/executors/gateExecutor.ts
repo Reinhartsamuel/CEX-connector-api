@@ -5,7 +5,10 @@ import { and, eq } from 'drizzle-orm';
 import * as JSONbig from 'json-bigint';
 import redis from '../db/redis';
 import type { ExchangeExecutor, ExecutorContext, ExecutorResult } from './types';
-import type { GateFuturesOrder } from '../schemas/interfaces';
+import type { GateFuturesOrder, GateTriggerPriceOrder } from '../schemas/interfaces';
+import { getOrderType } from '../utils/getOrderType';
+import { getTriggerRule } from '../utils/getTriggerRule';
+import { mapPriceType } from '../utils/mapPriceType';
 
 export const GateExecutor: ExchangeExecutor = {
   async execute(ctx: ExecutorContext): Promise<ExecutorResult> {
@@ -29,13 +32,19 @@ export const GateExecutor: ExchangeExecutor = {
 };
 
 async function openPosition(ctx: ExecutorContext): Promise<ExecutorResult> {
-  const { autotrader, action, exchange_user_id, encrypted_api_key, encrypted_api_secret } = ctx;
+  const { autotrader, action, exchange_user_id, encrypted_api_key, encrypted_api_secret, overrides } = ctx;
 
-  const contract = autotrader.symbol; // e.g. BTC_USDT
+  const contract = autotrader.symbol;
   const leverage = autotrader.leverage;
   const leverage_type = (autotrader.leverage_type || 'ISOLATED') as 'ISOLATED' | 'CROSS';
   const position_type = action === 'BUY' ? 'long' : 'short';
   const size = computeSize(autotrader);
+
+  // Resolve order type and price from signal override, defaulting to market
+  const order_type = overrides.order_type ?? 'market';
+  const isMarket = order_type === 'market';
+  const priceStr = isMarket ? '0' : String(overrides.price ?? 0);
+  const tif = isMarket ? 'ioc' : 'gtc';
 
   // Set leverage and margin mode from autotrader config
   await GateServices.updateLeverage(contract, leverage);
@@ -47,8 +56,8 @@ async function openPosition(ctx: ExecutorContext): Promise<ExecutorResult> {
   const orderPayload: GateFuturesOrder = {
     contract,
     size: sizeForOrder,
-    price: '0',   // always market for webhook signals
-    tif: 'ioc',   // immediate-or-cancel = market execution
+    price: priceStr,
+    tif,
     iceberg: 0,
     reduce_only: false,
     auto_size: '',
@@ -79,6 +88,54 @@ async function openPosition(ctx: ExecutorContext): Promise<ExecutorResult> {
     contract,
   }));
 
+  // Place TP/SL trigger orders only once the entry is filled (market) or always (limit — Gate handles trigger internally)
+  const orderFilled = resPlaceOrder?.finish_as === 'filled';
+  const autoSize = position_type === 'long' ? 'close_long' : 'close_short';
+  const gateOrderType = getOrderType(position_type); // e.g. 'close_long_position'
+  const initialPrice = gateOrderType.includes('position') ? '0' : priceStr;
+
+  if ((isMarket ? orderFilled : true) && overrides.take_profit?.enabled) {
+    const tpPayload: GateTriggerPriceOrder = {
+      initial: {
+        contract,
+        price: initialPrice,
+        tif,
+        auto_size: autoSize,
+        size: 0,
+        reduce_only: true,
+      },
+      trigger: {
+        strategy_type: 0,
+        price_type: mapPriceType(overrides.take_profit.price_type),
+        price: overrides.take_profit.price,
+        rule: getTriggerRule(position_type, true),
+      },
+      order_type: isMarket ? gateOrderType : undefined,
+    };
+    await GateServices.triggerPriceOrder(tpPayload);
+  }
+
+  if ((isMarket ? orderFilled : true) && overrides.stop_loss?.enabled) {
+    const slPayload: GateTriggerPriceOrder = {
+      initial: {
+        contract,
+        price: initialPrice,
+        tif,
+        auto_size: autoSize,
+        size: 0,
+        reduce_only: true,
+      },
+      trigger: {
+        strategy_type: 0,
+        price_type: mapPriceType(overrides.stop_loss.price_type),
+        price: overrides.stop_loss.price,
+        rule: getTriggerRule(position_type, false),
+      },
+      order_type: isMarket ? gateOrderType : undefined,
+    };
+    await GateServices.triggerPriceOrder(slPayload);
+  }
+
   // Persist trade to DB
   try {
     const tradeStatus =
@@ -97,16 +154,20 @@ async function openPosition(ctx: ExecutorContext): Promise<ExecutorResult> {
       open_order_id: resPlaceOrder.id.toString(),
       contract: resPlaceOrder.contract,
       position_type,
-      market_type: 'market',
+      market_type: order_type,
       size: resPlaceOrder.size,
       leverage,
-      leverage_type: leverage_type,
+      leverage_type,
       status: tradeStatus,
-      price: '0',
+      price: priceStr,
       reduce_only: false,
       is_tpsl: false,
-      take_profit_enabled: false,
-      stop_loss_enabled: false,
+      take_profit_enabled: overrides.take_profit?.enabled ?? false,
+      take_profit_price: overrides.take_profit?.enabled ? Number(overrides.take_profit.price) : 0,
+      take_profit_price_type: overrides.take_profit?.enabled ? overrides.take_profit.price_type : '',
+      stop_loss_enabled: overrides.stop_loss?.enabled ?? false,
+      stop_loss_price: overrides.stop_loss?.enabled ? Number(overrides.stop_loss.price) : 0,
+      stop_loss_price_type: overrides.stop_loss?.enabled ? overrides.stop_loss.price_type : '',
       metadata: JSON.parse(JSONbig.stringify(resPlaceOrder)),
     } as any);
   } catch (err) {

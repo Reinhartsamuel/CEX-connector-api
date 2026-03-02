@@ -7,18 +7,42 @@ import { GateHandler } from './gate/gateHandler';
 import { getExecutor } from '../executors/registry';
 import type { SignalAction } from '../executors/types';
 
+const tpSlSchema = z.object({
+  enabled: z.boolean(),
+  price: z.string(),
+  price_type: z.enum(['mark', 'last', 'index']),
+});
+
 const signalSchema = z.object({
   token: z.string().min(1),
   action: z.enum(['BUY', 'SELL', 'CLOSE', 'CANCEL']),
-});
+
+  // Optional overrides — if omitted, executor uses autotrader config defaults
+  order_type: z.enum(['market', 'limit']).optional(),
+  price: z.number().optional(),
+  take_profit: tpSlSchema.optional(),
+  stop_loss: tpSlSchema.optional(),
+}).refine(
+  (data) => {
+    // price is required when order_type = limit on BUY/SELL
+    if (data.order_type === 'limit' && (data.action === 'BUY' || data.action === 'SELL')) {
+      return data.price !== undefined && data.price > 0;
+    }
+    return true;
+  },
+  { message: 'price is required and must be > 0 when order_type is limit', path: ['price'] },
+);
 
 export const SignalHandler = {
   /**
    * POST /webhook/signal
    *
    * Minimal public endpoint — no JWT. Authenticated via per-autotrader webhook_token.
-   * TradingView alert payload:
-   *   { "token": "<webhook_token>", "action": "BUY" | "SELL" | "CLOSE" | "CANCEL" }
+   * TradingView alert payload (all fields except token+action are optional overrides):
+   *   { "token": "...", "action": "BUY"|"SELL"|"CLOSE"|"CANCEL",
+   *     "order_type": "market"|"limit", "price": 65000,
+   *     "take_profit": { "enabled": true, "price": "68000", "price_type": "mark" },
+   *     "stop_loss":   { "enabled": true, "price": "62000", "price_type": "mark" } }
    */
   handleSignal: async function (c: Context) {
     const start = Date.now();
@@ -85,6 +109,12 @@ export const SignalHandler = {
       encrypted_api_key: credentials.encrypted_api_key,
       encrypted_api_secret: credentials.encrypted_api_secret,
       action: body.action as SignalAction,
+      overrides: {
+        order_type: body.order_type,
+        price: body.price,
+        take_profit: body.take_profit,
+        stop_loss: body.stop_loss,
+      },
     });
 
     const latency_ms = Date.now() - start;
