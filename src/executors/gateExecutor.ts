@@ -31,10 +31,21 @@ export const GateExecutor: ExchangeExecutor = {
   },
 };
 
+/**
+ * Gate.io futures API requires underscore-separated symbols: BTC_USDT, not BTCUSDT.
+ * Normalizes any common variant to that format.
+ */
+function toGateContract(symbol: string): string {
+  // Already correct
+  if (symbol.includes('_')) return symbol.toUpperCase();
+  // BTCUSDT → BTC_USDT (matches USDT, USDC, BTC, ETH suffixes)
+  return symbol.replace(/(USDT|USDC|BTC|ETH|BNB)$/, '_$1').toUpperCase();
+}
+
 async function openPosition(ctx: ExecutorContext): Promise<ExecutorResult> {
   const { autotrader, action, exchange_user_id, encrypted_api_key, encrypted_api_secret, overrides } = ctx;
 
-  const contract = autotrader.symbol;
+  const contract = toGateContract(autotrader.symbol);
   const leverage = autotrader.leverage;
   const leverage_type = (autotrader.leverage_type || 'ISOLATED') as 'ISOLATED' | 'CROSS';
   const position_type = action === 'BUY' ? 'long' : 'short';
@@ -65,6 +76,13 @@ async function openPosition(ctx: ExecutorContext): Promise<ExecutorResult> {
   };
 
   const resPlaceOrder = await GateServices.placeFuturesOrder(orderPayload);
+
+  // Gate returns an error-shaped object on failure instead of throwing
+  if (!resPlaceOrder?.id) {
+    const errMsg = resPlaceOrder?.message || resPlaceOrder?.label || JSON.stringify(resPlaceOrder);
+    console.error('[GateExecutor] placeFuturesOrder failed:', errMsg);
+    return { success: false, error: `Gate order rejected: ${errMsg}` };
+  }
 
   // Cache position in Redis for the WS worker
   if (resPlaceOrder?.finish_as === 'filled') {
@@ -183,7 +201,7 @@ async function openPosition(ctx: ExecutorContext): Promise<ExecutorResult> {
 
 async function closePosition(ctx: ExecutorContext): Promise<ExecutorResult> {
   const { autotrader } = ctx;
-  const contract = autotrader.symbol;
+  const contract = toGateContract(autotrader.symbol);
 
   // Find all open trades for this autotrader/contract
   const running_trades = await postgresDb.query.trades.findMany({
@@ -198,7 +216,7 @@ async function closePosition(ctx: ExecutorContext): Promise<ExecutorResult> {
     running_trades.map(async (trade) => {
       const closePayload: GateFuturesOrder = {
         contract,
-        size: parseFloat(trade.size) * -1,
+        size: (parseFloat(trade.size) || 0) * -1,
         price: '0',
         tif: 'ioc',
         iceberg: 0,
@@ -207,6 +225,12 @@ async function closePosition(ctx: ExecutorContext): Promise<ExecutorResult> {
         settle: 'usdt',
       };
       const res = await GateServices.placeFuturesOrder(closePayload);
+
+      if (!res?.id) {
+        const errMsg = res?.message || res?.label || JSON.stringify(res);
+        console.error('[GateExecutor] closePosition placeFuturesOrder failed:', errMsg);
+        return res;
+      }
 
       if (res?.status === 'finished' && res?.finish_as === 'filled' && res?.left === 0) {
         await postgresDb.update(trades).set({
