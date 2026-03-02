@@ -722,4 +722,30 @@ userRouter.delete('/autotraders/:id',
   }
 );
 
+userRouter.patch('/autotraders/:id/status',
+  jwt({ secret: process.env.JWT_SECRET! }),
+  async (c) => {
+    const payload = c.get('jwtPayload');
+    const user_id = Number(payload.sub);
+    const autotrader_id = Number(c.req.param('id'));
+    const { status } = await c.req.json() as { status: 'active' | 'stopped' };
+
+    if (!['active', 'stopped'].includes(status)) {
+      return c.json({ error: 'status must be "active" or "stopped"' }, 400);
+    }
+
+    const [updated] = await postgresDb
+      .update(autotraders)
+      .set({ status, updated_at: sql`NOW()` })
+      .where(and(eq(autotraders.id, autotrader_id), eq(autotraders.user_id, user_id)))
+      .returning({ id: autotraders.id, status: autotraders.status });
+
+    if (!updated) {
+      return c.json({ error: 'Autotrader not found' }, 404);
+    }
+
+    return c.json({ success: true, id: updated.id, status: updated.status });
+  }
+);
+
 export default userRouter;
