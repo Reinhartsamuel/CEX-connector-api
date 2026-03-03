@@ -57,9 +57,11 @@ async function openPosition(ctx: ExecutorContext): Promise<ExecutorResult> {
   const priceStr = isMarket ? '0' : String(overrides.price ?? 0);
   const tif = isMarket ? 'ioc' : 'gtc';
 
-  // Set leverage and margin mode from autotrader config
-  await GateServices.updateLeverage(contract, leverage);
-  await GateServices.updateMarginMode(contract, leverage_type);
+  // Set leverage and margin mode in parallel
+  await Promise.all([
+    GateServices.updateLeverage(contract, leverage),
+    GateServices.updateMarginMode(contract, leverage_type),
+  ]);
 
   // Gate.io: short = negative size
   const sizeForOrder = position_type === 'short' ? -Math.abs(size) : Math.abs(size);

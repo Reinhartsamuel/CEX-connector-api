@@ -99,8 +99,8 @@ export const SignalHandler = {
       return c.json({ error: (err as Error).message }, 422);
     }
 
-    // 7. Execute
-    const result = await executor.execute({
+    // 7. Respond immediately so TradingView doesn't time out, execute in background
+    const execCtx = {
       autotrader,
       exchange,
       api_key: credentials.api_key,
@@ -115,13 +115,19 @@ export const SignalHandler = {
         take_profit: body.take_profit,
         stop_loss: body.stop_loss,
       },
+    };
+
+    executor.execute(execCtx).then((result) => {
+      if (!result.success) {
+        console.error('[SignalHandler] Executor failed:', result.error);
+      } else {
+        console.log('[SignalHandler] Executed:', body.action, autotrader.symbol, result.exchange_order_id);
+      }
+    }).catch((err) => {
+      console.error('[SignalHandler] Executor threw:', err);
     });
 
     const latency_ms = Date.now() - start;
-
-    if (!result.success) {
-      return c.json({ error: result.error, latency_ms }, 500);
-    }
 
     return c.json({
       ok: true,
@@ -129,7 +135,6 @@ export const SignalHandler = {
       exchange: exchange.exchange_title,
       autotrader_id: autotrader.id,
       symbol: autotrader.symbol,
-      exchange_order_id: result.exchange_order_id,
       latency_ms,
     });
   },
