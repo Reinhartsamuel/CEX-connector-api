@@ -14,11 +14,19 @@ import tokocryptoRouter from './routes/tokocryptoRoutes'
 import webhookRouter from './routes/webhookRoutes'
 
 const app = new Hono()
+const allowedOrigins = [
+  'http://localhost:5173',
+  process.env.CORS_ORIGIN,
+]
+
 app.use('*', cors({
-  origin: process.env.CORS_ORIGIN || 'http://localhost:5173',
+  // 2. Use a function to check the request origin
+  origin: (origin) => {
+    return allowedOrigins.includes(origin) ? origin : allowedOrigins[0]
+  },
   allowMethods: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS'],
   allowHeaders: ['Content-Type', 'Authorization'],
-  credentials:true
+  credentials: true,
 }))
 app.use('*', async (c, next) => {
   // If the path is /health, just skip the logger and go to the next middleware
