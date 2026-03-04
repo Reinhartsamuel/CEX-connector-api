@@ -722,6 +722,65 @@ userRouter.delete('/autotraders/:id',
   }
 );
 
+// GET /trades — paginated trade history for the authenticated user
+userRouter.get('/trades',
+  jwt({ secret: process.env.JWT_SECRET! }),
+  zValidator('query', tradesQuerySchema, validationErrorHandler),
+  async (c) => {
+    const payload = c.get('jwtPayload');
+    const user_id = Number(payload.sub);
+    const { exchange_id, market_type, contract, position_type, status, date_from, date_to, limit, offset } = c.req.valid('query');
+
+    const conditions = [
+      eq(trades.user_id, user_id),
+      eq(trades.is_tpsl, false),
+    ];
+
+    if (exchange_id) conditions.push(eq(trades.exchange_id, exchange_id));
+    if (market_type) conditions.push(eq(trades.market_type, market_type));
+    if (contract) conditions.push(eq(trades.contract, contract));
+    if (position_type) conditions.push(eq(trades.position_type, position_type));
+    if (status) conditions.push(eq(trades.status, status));
+    if (date_from) conditions.push(gte(trades.created_at, new Date(date_from)));
+    if (date_to) conditions.push(lte(trades.created_at, new Date(date_to)));
+
+    const [results, [countRow]] = await Promise.all([
+      postgresDb
+        .select({
+          id: trades.id,
+          contract: trades.contract,
+          position_type: trades.position_type,
+          market_type: trades.market_type,
+          size: trades.size,
+          price: trades.price,
+          status: trades.status,
+          pnl: trades.pnl,
+          pnl_margin: trades.pnl_margin,
+          open_filled_at: trades.open_filled_at,
+          created_at: trades.created_at,
+          exchange_title: exchanges.exchange_title,
+          exchange_user_id: exchanges.exchange_user_id,
+          autotrader_symbol: autotraders.symbol,
+        })
+        .from(trades)
+        .innerJoin(exchanges, eq(trades.exchange_id, exchanges.id))
+        .innerJoin(autotraders, eq(trades.autotrader_id, autotraders.id))
+        .where(and(...conditions))
+        .orderBy(desc(trades.created_at))
+        .limit(limit)
+        .offset(offset),
+
+      postgresDb
+        .select({ count: sql<number>`count(*)`.mapWith(Number) })
+        .from(trades)
+        .innerJoin(exchanges, eq(trades.exchange_id, exchanges.id))
+        .where(and(...conditions)),
+    ]);
+
+    return c.json({ data: results, total: countRow.count, limit, offset });
+  }
+);
+
 userRouter.patch('/autotraders/:id/status',
   jwt({ secret: process.env.JWT_SECRET! }),
   async (c) => {
