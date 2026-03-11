@@ -2,7 +2,10 @@ import WebSocket from "ws";
 import Redis from "ioredis";
 import { postgresDb } from "../db/client";
 import { exchanges, trades } from "../db/schema";
-import { eq } from "drizzle-orm";
+import { and, eq, inArray } from "drizzle-orm";
+import { publishWsReady } from "../utils/wsReady";
+
+const HL_BASE_URL = "https://api.hyperliquid.xyz";
 
 // ---- Redis Setup ---- //
 const redis = new Redis(process.env.REDIS_URL || "redis://127.0.0.1:6379");
@@ -44,14 +47,36 @@ const connections = new Map<string, HyperliquidConnection>();
   });
 })();
 
-// ---- Fetch Hyperliquid credentials from Redis ---- //
-async function fetchCreds(userId: string) {
-  const data = await redis.hgetall(`hyperliquid:creds:${userId}`);
-  if (!data || !data.walletAddress) return null;
-  return {
-    walletAddress: data.walletAddress,
-  };
+// ---- Restore connections for users with active trades on startup ---- //
+async function restoreConnections() {
+  console.log("[HL WS] Restoring connections for users with active trades...");
+
+  try {
+    const activeTrades = await postgresDb
+      .selectDistinct({ exchange_user_id: exchanges.exchange_user_id })
+      .from(trades)
+      .innerJoin(exchanges, eq(trades.exchange_id, exchanges.id))
+      .where(
+        and(
+          eq(exchanges.exchange_title, "hyperliquid"),
+          inArray(trades.status, ["waiting_position", "partially_filled", "waiting_targets"]),
+        ),
+      );
+
+    console.log(`[HL WS] Found ${activeTrades.length} users with active trades to reconnect`);
+
+    for (const { exchange_user_id } of activeTrades) {
+      ensureConnection(exchange_user_id, exchange_user_id);
+    }
+  } catch (err) {
+    console.error("[HL WS] Failed to restore connections on startup:", err);
+  }
 }
+
+restoreConnections();
+
+// Hyperliquid WS is unauthenticated — no API keys needed.
+// The wallet address (exchange_user_id) is passed directly via ws-control command.
 
 // ------------------------------------------- //
 //       MAIN CONNECTION MANAGEMENT
@@ -62,12 +87,12 @@ async function ensureConnection(userId: string, userAddress: string) {
 
   if (existing?.ws && existing.ws.readyState === WebSocket.OPEN) {
     console.log(`Hyperliquid WS Worker: connection already open for user ${userId}`);
+    publishWsReady(redis, "hyperliquid", userId).catch(() => {});
     return;
   }
 
-  const creds = await fetchCreds(userId);
-  if (!creds) {
-    console.warn(`Hyperliquid WS Worker: No credentials found for user ${userId}`);
+  if (!userAddress) {
+    console.warn(`Hyperliquid WS Worker: No wallet address for user ${userId}`);
     return;
   }
 
@@ -75,7 +100,7 @@ async function ensureConnection(userId: string, userAddress: string) {
 
   // Determine WebSocket URL (check if testnet from exchanges table)
   const exchange = await postgresDb.query.exchanges.findFirst({
-    where: eq(exchanges.exchange_user_id, creds.walletAddress),
+    where: eq(exchanges.exchange_user_id, userAddress),
   });
 
   const wsUrl = exchange?.testnet
@@ -135,6 +160,16 @@ function onWsOpen(userId: string, ws: WebSocket, userAddress: string) {
     }),
   );
   console.log(`📡 SUBSCRIBED (userFills) user=${userId} address=${userAddress}`);
+
+  // Signal that WS is ready so executors can proceed with order placement
+  publishWsReady(redis, "hyperliquid", userId).catch((err: any) =>
+    console.error(`Hyperliquid WS Worker: failed to publish ws-ready for user ${userId}:`, err),
+  );
+
+  // Run snapshot reconciliation after subscribing
+  reconcileSnapshot(userId, userAddress).catch((err: any) =>
+    console.error(`Hyperliquid WS Worker: reconciliation failed for user ${userId}:`, err),
+  );
 
   // Setup ping interval (30 seconds - server timeout is 60s)
   if (state.pingInterval) clearInterval(state.pingInterval);
@@ -252,6 +287,205 @@ process.on("SIGINT", () => {
   }
   process.exit(0);
 });
+
+// ------------------------------------------- //
+//        SNAPSHOT RECONCILIATION
+// ------------------------------------------- //
+
+/**
+ * After WS subscribes, poll Hyperliquid REST info API to catch any
+ * order/position changes that happened before WS was connected.
+ *
+ * Hyperliquid info endpoints are unauthenticated — just need the user address.
+ */
+async function reconcileSnapshot(userId: string, userAddress: string) {
+  console.log(`[HL Reconcile] Starting snapshot reconciliation for user ${userId} (${userAddress})`);
+
+  const exchange = await postgresDb.query.exchanges.findFirst({
+    columns: { id: true },
+    where: eq(exchanges.exchange_user_id, userAddress.toLowerCase()),
+  });
+  if (!exchange) {
+    console.warn(`[HL Reconcile] No exchange record for address=${userAddress}`);
+    return;
+  }
+
+  // ---- Phase 1: Reconcile pending orders (waiting_position / partially_filled) ----
+  const pendingTrades = await postgresDb
+    .select()
+    .from(trades)
+    .where(
+      and(
+        eq(trades.exchange_id, exchange.id),
+        inArray(trades.status, ["waiting_position", "partially_filled"]),
+      ),
+    );
+
+  console.log(`[HL Reconcile] Found ${pendingTrades.length} pending trades to check`);
+
+  if (pendingTrades.length > 0) {
+    // Fetch all open orders for this user
+    const openOrders = await hlInfoRequest({ type: "openOrders", user: userAddress });
+    const openOids = new Set<string>(
+      Array.isArray(openOrders) ? openOrders.map((o: any) => String(o.oid)) : [],
+    );
+
+    // Fetch recent fills for context on filled orders
+    const userFills = await hlInfoRequest({ type: "userFills", user: userAddress });
+    const fillsByOid = new Map<string, any>();
+    if (Array.isArray(userFills)) {
+      for (const fill of userFills) {
+        // Keep the most recent fill per OID
+        fillsByOid.set(String(fill.oid), fill);
+      }
+    }
+
+    for (const trade of pendingTrades) {
+      try {
+        const oid = trade.trade_id;
+
+        if (openOids.has(oid)) {
+          // Order is still open — no action needed
+          console.log(`[HL Reconcile] Order ${oid} still open, skipping`);
+          continue;
+        }
+
+        // Order is NOT in open orders — it's either filled, canceled, or rejected
+        // Check if we have a fill for it
+        const fill = fillsByOid.get(oid);
+
+        if (fill) {
+          const closedPnl = parseFloat(fill.closedPnl || "0");
+          const isPositionClosed = closedPnl !== 0;
+
+          if (isPositionClosed) {
+            // Order filled AND position already closed
+            await postgresDb.transaction(async (tx) => {
+              await tx
+                .update(trades)
+                .set({
+                  status: "closed",
+                  open_fill_price: fill.px,
+                  open_filled_at: Math.floor(fill.time / 1000),
+                  close_fill_price: fill.px,
+                  close_filled_at: Math.floor(fill.time / 1000),
+                  pnl: closedPnl.toString(),
+                  closed_at: new Date(),
+                })
+                .where(eq(trades.id, trade.id));
+            });
+            console.log(`[HL Reconcile] Trade ${trade.id} (oid=${oid}) filled+closed, PnL=${closedPnl}`);
+          } else {
+            // Order filled, position still open
+            await postgresDb
+              .update(trades)
+              .set({
+                status: "waiting_targets",
+                open_fill_price: fill.px,
+                open_filled_at: Math.floor(fill.time / 1000),
+              })
+              .where(eq(trades.id, trade.id));
+            console.log(`[HL Reconcile] Trade ${trade.id} (oid=${oid}) filled → waiting_targets`);
+          }
+        } else {
+          // No fill found and not in open orders → likely canceled
+          await postgresDb
+            .update(trades)
+            .set({ status: "cancelled", cancelled_at: new Date() })
+            .where(eq(trades.id, trade.id));
+          console.log(`[HL Reconcile] Trade ${trade.id} (oid=${oid}) not found in open/fills → cancelled`);
+        }
+      } catch (err) {
+        console.error(`[HL Reconcile] Error checking trade ${trade.trade_id}:`, err);
+      }
+    }
+  }
+
+  // ---- Phase 2: Reconcile open positions (waiting_targets → closed?) ----
+  const waitingTrades = await postgresDb
+    .select()
+    .from(trades)
+    .where(
+      and(
+        eq(trades.exchange_id, exchange.id),
+        eq(trades.status, "waiting_targets"),
+      ),
+    );
+
+  if (waitingTrades.length === 0) {
+    console.log(`[HL Reconcile] No waiting_targets trades to check`);
+    return;
+  }
+
+  // Fetch clearinghouse state for positions
+  const clearinghouseState = await hlInfoRequest({
+    type: "clearinghouseState",
+    user: userAddress,
+  });
+
+  // Build set of coins with open positions
+  const openPositionCoins = new Set<string>();
+  const assetPositions = clearinghouseState?.assetPositions || [];
+  for (const ap of assetPositions) {
+    const pos = ap.position || ap;
+    const szi = parseFloat(pos.szi || "0");
+    if (szi !== 0) {
+      openPositionCoins.add(pos.coin);
+    }
+  }
+
+  console.log(`[HL Reconcile] Open position coins: [${[...openPositionCoins].join(", ")}]`);
+
+  for (const trade of waitingTrades) {
+    // Hyperliquid uses coin name (e.g. "BTC") not pair format
+    // The trade.contract might be "BTC", "BTC-USDT", or "BTC_USDT"
+    const tradeCoin = trade.contract.replace("-USDT", "").replace("_USDT", "");
+
+    if (!openPositionCoins.has(tradeCoin)) {
+      console.log(`[HL Reconcile] Trade ${trade.id} (${trade.contract}) has no open position — marking closed`);
+
+      // Check fills for PnL data
+      const userFills = await hlInfoRequest({ type: "userFills", user: userAddress });
+      const tradeFill = Array.isArray(userFills)
+        ? userFills.find((f: any) => String(f.oid) === trade.trade_id && parseFloat(f.closedPnl || "0") !== 0)
+        : null;
+
+      await postgresDb
+        .update(trades)
+        .set({
+          status: "closed",
+          closed_at: new Date(),
+          pnl: tradeFill ? tradeFill.closedPnl : "0",
+          close_fill_price: tradeFill?.px,
+          close_filled_at: tradeFill ? Math.floor(tradeFill.time / 1000) : undefined,
+        })
+        .where(eq(trades.id, trade.id));
+    }
+  }
+
+  console.log(`[HL Reconcile] Snapshot reconciliation complete for user ${userId}`);
+}
+
+/**
+ * Helper to call Hyperliquid's unauthenticated info API.
+ */
+async function hlInfoRequest(body: Record<string, any>) {
+  try {
+    const response = await fetch(`${HL_BASE_URL}/info`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(body),
+    });
+    if (!response.ok) {
+      console.error(`[HL Info] Request failed: ${response.status} ${await response.text()}`);
+      return null;
+    }
+    return await response.json();
+  } catch (err) {
+    console.error(`[HL Info] Request error:`, err);
+    return null;
+  }
+}
 
 // ------------------------------------------- //
 //          MESSAGE HANDLERS

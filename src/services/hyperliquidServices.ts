@@ -114,6 +114,51 @@ export const HyperliquidServices = {
   },
 
   /**
+   * Get open orders for a user address (unauthenticated info endpoint).
+   */
+  getOpenOrders: async function (userAddress: string) {
+    const response = await fetch(`${BASE_URL}/info`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ type: "openOrders", user: userAddress }),
+    });
+    if (!response.ok) {
+      return { status: "error", message: await response.text(), statusCode: response.status };
+    }
+    return await response.json();
+  },
+
+  /**
+   * Get clearinghouse state (positions, margin, account value) for a user address.
+   */
+  getClearinghouseState: async function (userAddress: string) {
+    const response = await fetch(`${BASE_URL}/info`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ type: "clearinghouseState", user: userAddress }),
+    });
+    if (!response.ok) {
+      return { status: "error", message: await response.text(), statusCode: response.status };
+    }
+    return await response.json();
+  },
+
+  /**
+   * Get order status by OID for a user address.
+   */
+  getOrderStatus: async function (userAddress: string, oid: number) {
+    const response = await fetch(`${BASE_URL}/info`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ type: "orderStatus", user: userAddress, oid }),
+    });
+    if (!response.ok) {
+      return { status: "error", message: await response.text(), statusCode: response.status };
+    }
+    return await response.json();
+  },
+
+  /**
    * Generic Request Handler for Playground.
    */
   whitelistedRequest: async function ({

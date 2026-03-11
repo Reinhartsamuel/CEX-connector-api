@@ -4,8 +4,12 @@ import Redis from "ioredis";
 import JSONbig from "json-bigint";
 import { postgresDb } from "../db/client";
 import { exchanges, Trade, trades } from "../db/schema";
-import { and, desc, eq } from "drizzle-orm";
-import { signWebSocketRequest } from "../utils/authentication/signRequestGate";
+import { and, desc, eq, inArray } from "drizzle-orm";
+import { signWebSocketRequest, signRequestRestGate } from "../utils/authentication/signRequestGate";
+import { publishWsReady } from "../utils/wsReady";
+import { decryptExchangeCreds } from "../utils/cryptography/decryptExchangeCreds";
+
+const GATE_BASE_URL = "https://api.gateio.ws";
 
 // ---- Redis Setup ---- //
 const redis = new Redis(process.env.REDIS_URL || "redis://127.0.0.1:6379");
@@ -46,11 +50,39 @@ const connections = new Map<string, UserConnection>();
   });
 })();
 
-// ---- Fetch Gate credentials from Redis ---- //
+// ---- Restore connections for users with active trades on startup ---- //
+async function restoreConnections() {
+  console.log("[Gate WS] Restoring connections for users with active trades...");
+
+  try {
+    const activeTrades = await postgresDb
+      .selectDistinct({ exchange_user_id: exchanges.exchange_user_id })
+      .from(trades)
+      .innerJoin(exchanges, eq(trades.exchange_id, exchanges.id))
+      .where(
+        and(
+          eq(exchanges.exchange_title, "gate"),
+          inArray(trades.status, ["waiting_position", "partially_filled", "waiting_targets"]),
+        ),
+      );
+
+    console.log(`[Gate WS] Found ${activeTrades.length} users with active trades to reconnect`);
+
+    for (const { exchange_user_id } of activeTrades) {
+      ensureConnection(exchange_user_id);
+    }
+  } catch (err) {
+    console.error("[Gate WS] Failed to restore connections on startup:", err);
+  }
+}
+
+restoreConnections();
+
+// ---- Fetch Gate credentials via KMS decryption from DB ---- //
 async function fetchCreds(userId: string) {
-  const data = await redis.hgetall(`gate:creds:${userId}`);
-  if (!data || !data.apiKey || !data.apiSecret) return null;
-  return { apiKey: data.apiKey, apiSecret: data.apiSecret };
+  const creds = await decryptExchangeCreds(userId);
+  if (!creds) return null;
+  return { apiKey: creds.apiKey, apiSecret: creds.apiSecret };
 }
 
 // ---- Build WebSocket auth payload ---- //
@@ -85,6 +117,8 @@ async function ensureConnection(
 
   if (existing?.ws && existing.ws.readyState === WebSocket.OPEN) {
     console.log(`WS Worker: connection already open for user ${userId}`);
+    // Still publish ready so the executor waiting on ws-ready doesn't hang
+    publishWsReady(redis, "gate", userId).catch(() => {});
     return;
   }
 
@@ -177,6 +211,16 @@ function onWsOpen(
   );
   console.log(`📡 SUBSCRIBED (POSITIONS) user=${userId}`);
 
+  // == Signal that WS is ready so executors can proceed with order placement ==
+  publishWsReady(redis, "gate", userId).catch((err) =>
+    console.error(`WS Worker: failed to publish ws-ready for user ${userId}:`, err),
+  );
+
+  // == Run snapshot reconciliation after subscribing ==
+  reconcileSnapshot(userId, creds).catch((err) =>
+    console.error(`WS Worker: reconciliation failed for user ${userId}:`, err),
+  );
+
   // == Setup ping interval ==
   if (state.pingInterval) clearInterval(state.pingInterval);
 
@@ -218,18 +262,17 @@ async function onWsMessage(userId: string, raw: Buffer) {
   if (channel === "futures.orders") {
     // console.log(`📥 ORDERS UPDATE (${userId}):`, JSON.stringify(msg, null, 2));
 
-    // Handle order updates
-    await Promise.all(
-      items.map(async (item: any) => {
+    // Handle order updates inside a transaction for atomicity
+    await postgresDb.transaction(async (tx) => {
+      for (const item of items) {
         const event = classifyOrderEvent(item);
-        console.log("🤮🤮🤮🤮🤮🤮classified order event:", event);
-        if (event === "subscribe_ack") return;
+        console.log("[Gate WS] classified order event:", event);
+        if (event === "subscribe_ack") continue;
 
-        // console.log(`getting trades with trade.id: ${item.id_string}`)
         let tradeData: Trade | null = null;
         if (item?.id || item?.id_string) {
           try {
-            const [row] = await postgresDb
+            const [row] = await tx
               .select()
               .from(trades)
               .where(eq(trades.trade_id, item.id_string));
@@ -238,53 +281,52 @@ async function onWsMessage(userId: string, raw: Buffer) {
             console.error(e, "error query");
           }
         }
-        // ========================EVENT HANDLING========================
-        // ========================EVENT HANDLING========================
-        // ========================EVENT HANDLING========================
+
         if (item.id_string) {
           switch (event) {
             case "order_filled_open":
-              // update DB trade -> waiting_targets (your current logic)
-              // but also _do not_ consider position > open until positions.update arrives;
-              // mark trade as filled_at: item.finish_time / fill_price, then wait for positions update.
-              console.log(`updating trade id ${item.id_string} to "waiting_targets"`);
-              await postgresDb
+              console.log(`[Gate WS] Order ${item.id_string} filled → waiting_targets`);
+              await tx
                 .update(trades)
-                .set({ status: "waiting_targets" })
+                .set({
+                  status: "waiting_targets",
+                  open_fill_price: item.fill_price ?? item.price,
+                  open_filled_at: item.finish_time ? Number(item.finish_time) : undefined,
+                })
                 .where(eq(trades.trade_id, item.id_string));
-              console.log(
-                "trade Data::::: please handle TP/SL",
-                JSON.stringify(tradeData, null, 2),
-              );
               break;
 
             case "order_filled_close":
+              console.log(`[Gate WS] Close order ${item.id_string} filled`);
+              if (tradeData) {
+                await tx
+                  .update(trades)
+                  .set({
+                    close_order_id: item.id_string,
+                    close_fill_price: item.fill_price ?? item.price,
+                    close_filled_at: item.finish_time ? Number(item.finish_time) : undefined,
+                  })
+                  .where(eq(trades.trade_id, tradeData.trade_id));
+              }
               break;
 
             case "order_partial_fill":
-              // set status partially_filled and update left
-              // console.log(`updating trade id ${item.id_string} to "partially_filled"`);
-              await postgresDb
+              await tx
                 .update(trades)
                 .set({ status: "partially_filled" })
                 .where(eq(trades.trade_id, item.id_string));
               break;
 
             default:
-              // log for debugging
-              console.log("order event not handled:", item);
+              console.log("[Gate WS] Order event not handled:", event, item.id_string);
           }
         } else {
-          console.log("🙏🙏🙏🙏 no trade.id_string");
+          console.log("[Gate WS] Order update missing id_string, skipping");
         }
-        //================================================================
-        //================================================================
-        //================================================================
-        //================================================================
-        //================================================================
+
         await redis.publish(`user:${userId}:orders:chan`, JSON.stringify(item));
-      }),
-    );
+      }
+    });
   }
 
   if (channel === "futures.positions") {
@@ -364,6 +406,220 @@ process.on("SIGINT", () => {
   }
   process.exit(0);
 });
+
+// ------------------------------------------- //
+//        SNAPSHOT RECONCILIATION
+// ------------------------------------------- //
+
+/**
+ * After WS subscribes, poll REST API to catch any order/position changes
+ * that happened before the WS connection was established (race condition fix).
+ *
+ * 1. Find all DB trades for this exchange_user_id in transient states
+ * 2. For each "waiting_position"/"partially_filled" trade → check order via REST
+ * 3. For "waiting_targets" trades → check if position is already closed via REST
+ */
+async function reconcileSnapshot(
+  userId: string,
+  creds: { apiKey: string; apiSecret: string },
+) {
+  console.log(`[Reconcile] Starting snapshot reconciliation for user ${userId}`);
+
+  // Find the exchange record for this user
+  const exchange = await postgresDb.query.exchanges.findFirst({
+    columns: { id: true },
+    where: eq(exchanges.exchange_user_id, userId),
+  });
+  if (!exchange) {
+    console.warn(`[Reconcile] No exchange record for exchange_user_id=${userId}`);
+    return;
+  }
+
+  // ---- Phase 1: Reconcile pending orders (waiting_position / partially_filled) ----
+  const pendingTrades = await postgresDb
+    .select()
+    .from(trades)
+    .where(
+      and(
+        eq(trades.exchange_id, exchange.id),
+        inArray(trades.status, ["waiting_position", "partially_filled"]),
+      ),
+    );
+
+  console.log(`[Reconcile] Found ${pendingTrades.length} pending trades to check for user ${userId}`);
+
+  // Fetch all order statuses from REST first, then apply updates in a single transaction
+  const pendingUpdates: Array<{ trade: typeof pendingTrades[0]; event: OrderEvent; orderData: any }> = [];
+
+  for (const trade of pendingTrades) {
+    try {
+      const orderData = await gateRestGetOrder(creds, trade.trade_id);
+      if (!orderData || orderData.status === "error") {
+        console.warn(`[Reconcile] Failed to fetch order ${trade.trade_id}:`, orderData);
+        continue;
+      }
+
+      const event = classifyOrderEvent(orderData);
+      console.log(`[Reconcile] Order ${trade.trade_id} REST status: ${event}`);
+      pendingUpdates.push({ trade, event, orderData });
+    } catch (err) {
+      console.error(`[Reconcile] Error checking order ${trade.trade_id}:`, err);
+    }
+  }
+
+  if (pendingUpdates.length > 0) {
+    await postgresDb.transaction(async (tx) => {
+      for (const { trade, event, orderData } of pendingUpdates) {
+        if (event === "order_filled_open") {
+          await tx
+            .update(trades)
+            .set({
+              status: "waiting_targets",
+              open_fill_price: orderData.fill_price ?? orderData.price,
+              open_filled_at: orderData.finish_time ? Number(orderData.finish_time) : undefined,
+            })
+            .where(eq(trades.id, trade.id));
+          console.log(`[Reconcile] Trade ${trade.id} updated to waiting_targets (was ${trade.status})`);
+        } else if (event === "order_filled_close") {
+          await tx
+            .update(trades)
+            .set({ status: "closed", closed_at: new Date() })
+            .where(eq(trades.id, trade.id));
+          console.log(`[Reconcile] Trade ${trade.id} updated to closed (reduce-only fill)`);
+        } else if (event === "order_cancelled") {
+          await tx
+            .update(trades)
+            .set({ status: "cancelled", cancelled_at: new Date() })
+            .where(eq(trades.id, trade.id));
+          console.log(`[Reconcile] Trade ${trade.id} updated to cancelled`);
+        }
+      }
+    });
+  }
+
+  // ---- Phase 2: Reconcile open positions (waiting_targets → closed?) ----
+  const waitingTrades = await postgresDb
+    .select()
+    .from(trades)
+    .where(
+      and(
+        eq(trades.exchange_id, exchange.id),
+        eq(trades.status, "waiting_targets"),
+      ),
+    );
+
+  if (waitingTrades.length === 0) {
+    console.log(`[Reconcile] No waiting_targets trades to check for user ${userId}`);
+    return;
+  }
+
+  // Fetch all current positions from Gate REST
+  const positions = await gateRestGetPositions(creds);
+  if (!positions || positions.status === "error") {
+    console.warn(`[Reconcile] Failed to fetch positions for user ${userId}:`, positions);
+    return;
+  }
+
+  // Build a set of contracts that have an open position (size != 0)
+  const openPositionContracts = new Set<string>();
+  for (const pos of Array.isArray(positions) ? positions : []) {
+    if (Number(pos.size ?? 0) !== 0) {
+      openPositionContracts.add(pos.contract);
+    }
+  }
+
+  console.log(`[Reconcile] Open position contracts: [${[...openPositionContracts].join(", ")}]`);
+
+  // Collect closed trades and their PnL from REST, then batch-update in a transaction
+  const closedUpdates: Array<{ trade: typeof waitingTrades[0]; pnl: string }> = [];
+
+  for (const trade of waitingTrades) {
+    if (!openPositionContracts.has(trade.contract)) {
+      console.log(`[Reconcile] Trade ${trade.id} (${trade.contract}) has no open position — marking closed`);
+
+      let pnl = "0";
+      try {
+        const orderData = await gateRestGetOrder(creds, trade.trade_id);
+        pnl = orderData?.realised_pnl ?? "0";
+      } catch {
+        // If REST fails, still mark closed but with 0 PnL
+      }
+
+      closedUpdates.push({ trade, pnl });
+    }
+  }
+
+  if (closedUpdates.length > 0) {
+    await postgresDb.transaction(async (tx) => {
+      for (const { trade, pnl } of closedUpdates) {
+        await tx
+          .update(trades)
+          .set({
+            status: "closed",
+            closed_at: new Date(),
+            pnl,
+          })
+          .where(eq(trades.id, trade.id));
+      }
+    });
+
+    // Clean up Redis position cache after DB transaction succeeds
+    for (const { trade } of closedUpdates) {
+      const mode = trade.position_type === "long" ? "dual_long" : "dual_short";
+      const positionKey = `${trade.contract}:${mode}`;
+      await redis.hdel(`user:${userId}:positions`, positionKey);
+    }
+  }
+
+  console.log(`[Reconcile] Snapshot reconciliation complete for user ${userId}`);
+}
+
+// ---- Gate REST helpers for reconciliation (avoids singleton GateServices state issue) ----
+
+async function gateRestGetOrder(
+  creds: { apiKey: string; apiSecret: string },
+  orderId: string,
+) {
+  const urlPath = `/api/v4/futures/usdt/orders/${orderId}`;
+  const headers = signRequestRestGate(
+    { key: creds.apiKey, secret: creds.apiSecret },
+    { method: "GET", urlPath, queryString: "" },
+  );
+
+  const response = await fetch(`${GATE_BASE_URL}${urlPath}`, {
+    method: "GET",
+    headers: { "Content-Type": "application/json", ...headers },
+  });
+
+  if (!response.ok) {
+    const errorText = await response.text();
+    return { status: "error" as const, message: errorText, statusCode: response.status };
+  }
+
+  const responseText = await response.text();
+  return JSONbig.parse(responseText);
+}
+
+async function gateRestGetPositions(creds: { apiKey: string; apiSecret: string }) {
+  const urlPath = "/api/v4/futures/usdt/positions";
+  const headers = signRequestRestGate(
+    { key: creds.apiKey, secret: creds.apiSecret },
+    { method: "GET", urlPath, queryString: "", payload: "" },
+  );
+
+  const response = await fetch(`${GATE_BASE_URL}${urlPath}`, {
+    method: "GET",
+    headers: { "Content-Type": "application/json", ...headers },
+  });
+
+  if (!response.ok) {
+    const errorText = await response.text();
+    return { status: "error" as const, message: errorText, statusCode: response.status };
+  }
+
+  const responseText = await response.text();
+  return JSONbig.parse(responseText);
+}
 
 // --------------------- helper types ---------------------
 type OrderItem = any;
@@ -503,41 +759,57 @@ async function handlePositionItem(userId: string, item: any) {
       break;
 
     case "position_closed":
-      // query trades where status === waiting_targets &&
-      // exchange_user_id == item.user_id &&
-      // contract == item.contract
       const exchange = await postgresDb.query.exchanges.findFirst({
-        columns: {
-          id: true, // Only select the id column
-        },
+        columns: { id: true },
         where: eq(exchanges.exchange_user_id, String(item.user)),
       });
 
+      if (!exchange) {
+        console.warn(`[Gate WS] No exchange record for user ${item.user} — skipping position_closed update`);
+        await redis.hdel(`user:${userId}:positions`, positionKey);
+        break;
+      }
 
-      const updatedTrade = await postgresDb
-        .update(trades)
-        .set({
-          // Your update fields here, for example:
-          status: "closed",
-          closed_at: new Date(),
-          pnl: item.realised_pnl ?? 0,
-        })
+      // Find all waiting_targets trades for this contract — need to distribute PnL by size
+      const matchingTrades = await postgresDb
+        .select({ id: trades.id, size: trades.size })
+        .from(trades)
         .where(
           and(
             eq(trades.status, "waiting_targets"),
             eq(trades.contract, item.contract),
-            eq(trades.exchange_id, exchange!.id),
+            eq(trades.exchange_id, exchange.id),
           ),
-        )
-        .returning({
-          id: trades.id,
-          // Include any other fields you want to return
-          status: trades.status,
-          contract: trades.contract,
-        });
-      console.log(
-        `😭🚀🤮🔥🅾🫡😭🚀🤮🔥🅾🫡😭🚀🤮🔥🅾🫡😭🚀🤮🔥🅾🫡😭🚀🤮🔥🅾🫡😭🚀🤮🔥🅾🫡 position for id ${updatedTrade[0].id}:::: ${JSON.stringify(updatedTrade, null, 2)}`,
-      );
+        );
+
+      if (matchingTrades.length === 0) {
+        console.warn(`[Gate WS] Position closed for ${item.contract} but no matching waiting_targets trade found`);
+        await redis.hdel(`user:${userId}:positions`, positionKey);
+        break;
+      }
+
+      const totalPnl = parseFloat(item.realised_pnl ?? "0");
+      const totalSize = matchingTrades.reduce((sum: number, t: { size: string | null }) => sum + Math.abs(parseFloat(t.size ?? "0")), 0);
+      const now = new Date();
+
+      await postgresDb.transaction(async (tx) => {
+        for (const trade of matchingTrades) {
+          // Distribute PnL proportionally by size
+          const tradeSize = Math.abs(parseFloat(trade.size ?? "0"));
+          const tradePnl = totalSize > 0 ? (tradeSize / totalSize) * totalPnl : 0;
+
+          await tx
+            .update(trades)
+            .set({
+              status: "closed",
+              closed_at: now,
+              pnl: tradePnl.toString(),
+            })
+            .where(eq(trades.id, trade.id));
+        }
+      });
+
+      console.log(`[Gate WS] Position closed — updated ${matchingTrades.length} trade(s) for ${item.contract}, total PnL=${totalPnl}`);
 
       await redis.hdel(`user:${userId}:positions`, positionKey);
       break;

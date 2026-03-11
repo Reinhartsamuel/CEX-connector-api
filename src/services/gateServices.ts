@@ -43,7 +43,7 @@ export const GateServices = {
 
     const payload = {
       contract,
-      mode: marginMode,
+      mode: marginMode.toLowerCase(),
     };
     const payloadStr = JSON.stringify(payload);
 

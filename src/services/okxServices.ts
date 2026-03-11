@@ -94,6 +94,108 @@ export const OkxServices = {
     return JSONbig.parse(responseText);
   },
 
+  /**
+   * Get order details by orderId
+   * GET /api/v5/trade/order?instId=...&ordId=...
+   */
+  getOrderDetails: async function (instId: string, ordId: string) {
+    const requestPath = `/api/v5/trade/order?instId=${instId}&ordId=${ordId}`;
+    const headers = signRequestOkx(
+      {
+        key: this.config.credentials.key,
+        secret: this.config.credentials.secret,
+        passphrase: this.config.credentials.passphrase,
+      },
+      {
+        method: "GET",
+        requestPath,
+      },
+    );
+
+    const response = await fetch(this.config.baseUrl + requestPath, {
+      method: "GET",
+      headers: {
+        "Content-Type": "application/json",
+        ...headers,
+      },
+    });
+
+    if (!response.ok) {
+      const errorText = await response.text();
+      return { status: "error", message: errorText, statusCode: response.status };
+    }
+    const responseText = await response.text();
+    return JSONbig.parse(responseText);
+  },
+
+  /**
+   * Get pending orders (open/partially filled)
+   * GET /api/v5/trade/orders-pending?instType=SWAP
+   */
+  getPendingOrders: async function (instType: string = "SWAP") {
+    const requestPath = `/api/v5/trade/orders-pending?instType=${instType}`;
+    const headers = signRequestOkx(
+      {
+        key: this.config.credentials.key,
+        secret: this.config.credentials.secret,
+        passphrase: this.config.credentials.passphrase,
+      },
+      {
+        method: "GET",
+        requestPath,
+      },
+    );
+
+    const response = await fetch(this.config.baseUrl + requestPath, {
+      method: "GET",
+      headers: {
+        "Content-Type": "application/json",
+        ...headers,
+      },
+    });
+
+    if (!response.ok) {
+      const errorText = await response.text();
+      return { status: "error", message: errorText, statusCode: response.status };
+    }
+    const responseText = await response.text();
+    return JSONbig.parse(responseText);
+  },
+
+  /**
+   * Get current positions
+   * GET /api/v5/account/positions?instType=SWAP
+   */
+  getPositions: async function (instType: string = "SWAP") {
+    const requestPath = `/api/v5/account/positions?instType=${instType}`;
+    const headers = signRequestOkx(
+      {
+        key: this.config.credentials.key,
+        secret: this.config.credentials.secret,
+        passphrase: this.config.credentials.passphrase,
+      },
+      {
+        method: "GET",
+        requestPath,
+      },
+    );
+
+    const response = await fetch(this.config.baseUrl + requestPath, {
+      method: "GET",
+      headers: {
+        "Content-Type": "application/json",
+        ...headers,
+      },
+    });
+
+    if (!response.ok) {
+      const errorText = await response.text();
+      return { status: "error", message: errorText, statusCode: response.status };
+    }
+    const responseText = await response.text();
+    return JSONbig.parse(responseText);
+  },
+
   whitelistedRequest: async function ({
     method,
     requestPath,

@@ -2,7 +2,7 @@
   "name": "byscript-connector-api",
   "scripts": {
     "dev": "bun run --hot src/index.ts",
-    "start": "",
+    "start": "pm2-runtime ecosystem.config.js",
     "db:generate": "drizzle-kit generate",
     "db:push": "drizzle-kit push",
     "db:studio": "drizzle-kit studio",
@@ -23,6 +23,7 @@
     "postgres": "^3.4.7",
     "viem": "^2.43.5",
     "ws": "^8.19.0",
+    "pm2": "^5.4.3",
     "zod": "^4.1.12"
   },
   "devDependencies": {

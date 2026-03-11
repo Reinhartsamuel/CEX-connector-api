@@ -1,6 +1,7 @@
 import { GateServices } from '../services/gateServices';
 import { postgresDb } from '../db/client';
 import { trades } from '../db/schema';
+import type { Autotrader } from '../db/schema';
 import { and, eq } from 'drizzle-orm';
 import * as JSONbig from 'json-bigint';
 import redis from '../db/redis';
@@ -9,10 +10,13 @@ import type { GateFuturesOrder, GateTriggerPriceOrder } from '../schemas/interfa
 import { getOrderType } from '../utils/getOrderType';
 import { getTriggerRule } from '../utils/getTriggerRule';
 import { mapPriceType } from '../utils/mapPriceType';
+import { waitForWsReady } from '../utils/wsReady';
+
+const REDIS_URL = process.env.REDIS_URL || 'redis://127.0.0.1:6379';
 
 export const GateExecutor: ExchangeExecutor = {
   async execute(ctx: ExecutorContext): Promise<ExecutorResult> {
-    const { autotrader, exchange_user_id, encrypted_api_key, encrypted_api_secret, action } = ctx;
+    const { autotrader, exchange_user_id, action } = ctx;
 
     GateServices.initialize(ctx.api_key, ctx.api_secret);
 
@@ -43,7 +47,7 @@ function toGateContract(symbol: string): string {
 }
 
 async function openPosition(ctx: ExecutorContext): Promise<ExecutorResult> {
-  const { autotrader, action, exchange_user_id, encrypted_api_key, encrypted_api_secret, overrides } = ctx;
+  const { autotrader, action, exchange_user_id, overrides } = ctx;
 
   const contract = toGateContract(autotrader.symbol);
   const leverage = autotrader.leverage;
@@ -57,13 +61,27 @@ async function openPosition(ctx: ExecutorContext): Promise<ExecutorResult> {
   const priceStr = isMarket ? '0' : String(overrides.price ?? 0);
   const tif = isMarket ? 'ioc' : 'gtc';
 
-  // Set leverage and margin mode in parallel
+  // ---- Step 1: Ensure WS worker is connected BEFORE placing the order ----
+  // This prevents the race condition where market orders fill instantly
+  // before the WS worker has subscribed to order/position events.
+  // Worker decrypts credentials from DB via KMS — no plaintext in Redis.
+  await redis.publish('ws-control', JSON.stringify({
+    op: 'open',
+    userId: String(exchange_user_id),
+    contract,
+  }));
+
+  // Wait for the worker to signal it's connected and subscribed (5s timeout).
+  // On timeout we proceed anyway — the reconciliation snapshot will catch up.
+  await waitForWsReady(REDIS_URL, 'gate', String(exchange_user_id), 5000);
+
+  // ---- Step 2: Set leverage and margin mode in parallel ----
   await Promise.all([
     GateServices.updateLeverage(contract, leverage),
     GateServices.updateMarginMode(contract, leverage_type),
   ]);
 
-  // Gate.io: short = negative size
+  // ---- Step 3: Place the order (WS is now listening) ----
   const sizeForOrder = position_type === 'short' ? -Math.abs(size) : Math.abs(size);
 
   const orderPayload: GateFuturesOrder = {
@@ -95,18 +113,6 @@ async function openPosition(ctx: ExecutorContext): Promise<ExecutorResult> {
       JSON.stringify(resPlaceOrder),
     );
   }
-
-  // Trigger WS subscription for order updates
-  await redis.hset(
-    `gate:creds:${exchange_user_id}`,
-    'apiKey', encrypted_api_key,
-    'apiSecret', encrypted_api_secret,
-  );
-  await redis.publish('ws-control', JSON.stringify({
-    op: 'open',
-    userId: String(exchange_user_id),
-    contract,
-  }));
 
   // Place TP/SL trigger orders only once the entry is filled (market) or always (limit — Gate handles trigger internally)
   const orderFilled = resPlaceOrder?.finish_as === 'filled';
@@ -158,12 +164,12 @@ async function openPosition(ctx: ExecutorContext): Promise<ExecutorResult> {
 
   // Persist trade to DB
   try {
-    const tradeStatus =
+    const orderFilled =
       resPlaceOrder?.status === 'finished' &&
       resPlaceOrder?.finish_as === 'filled' &&
-      resPlaceOrder?.left === 0
-        ? 'waiting_targets'
-        : resPlaceOrder?.status;
+      resPlaceOrder?.left === 0;
+
+    const tradeStatus = orderFilled ? 'waiting_targets' : resPlaceOrder?.status;
 
     await postgresDb.insert(trades).values({
       user_id: autotrader.user_id,
@@ -180,6 +186,9 @@ async function openPosition(ctx: ExecutorContext): Promise<ExecutorResult> {
       leverage_type,
       status: tradeStatus,
       price: priceStr,
+      // For market orders: Gate returns fill_price and finish_time in the same REST response
+      open_fill_price: orderFilled ? (resPlaceOrder.fill_price ?? resPlaceOrder.price) : undefined,
+      open_filled_at: orderFilled && resPlaceOrder.finish_time ? Number(resPlaceOrder.finish_time) : undefined,
       reduce_only: false,
       is_tpsl: false,
       take_profit_enabled: overrides.take_profit?.enabled ?? false,
@@ -214,7 +223,8 @@ async function closePosition(ctx: ExecutorContext): Promise<ExecutorResult> {
     ),
   });
 
-  const results = await Promise.all(
+  // Place all close orders on the exchange first
+  const orderResults = await Promise.all(
     running_trades.map(async (trade) => {
       const closePayload: GateFuturesOrder = {
         contract,
@@ -231,11 +241,21 @@ async function closePosition(ctx: ExecutorContext): Promise<ExecutorResult> {
       if (!res?.id) {
         const errMsg = res?.message || res?.label || JSON.stringify(res);
         console.error('[GateExecutor] closePosition placeFuturesOrder failed:', errMsg);
-        return res;
       }
 
-      if (res?.status === 'finished' && res?.finish_as === 'filled' && res?.left === 0) {
-        await postgresDb.update(trades).set({
+      return { trade, res };
+    }),
+  );
+
+  // Batch all DB updates in a single transaction for atomicity
+  const filledResults = orderResults.filter(
+    ({ res }: { res: any }) => res?.status === 'finished' && res?.finish_as === 'filled' && res?.left === 0,
+  );
+
+  if (filledResults.length > 0) {
+    await postgresDb.transaction(async (tx) => {
+      for (const { trade, res } of filledResults) {
+        await tx.update(trades).set({
           status: 'closed',
           close_order_id: res.id,
           pnl: res.pnl,
@@ -243,10 +263,10 @@ async function closePosition(ctx: ExecutorContext): Promise<ExecutorResult> {
           closed_at: new Date(),
         }).where(eq(trades.id, trade.id));
       }
+    });
+  }
 
-      return res;
-    }),
-  );
+  const results = orderResults.map(({ res }: { res: any }) => res);
 
   return {
     success: true,
@@ -260,6 +280,6 @@ async function closePosition(ctx: ExecutorContext): Promise<ExecutorResult> {
  * For now we use initial_investment as the contract count directly.
  * TODO: factor in current price and contract multiplier for USD-denominated sizing.
  */
-function computeSize(autotrader: typeof autotrader): number {
+function computeSize(autotrader: Autotrader): number {
   return Math.floor(Number(autotrader.initial_investment));
 }

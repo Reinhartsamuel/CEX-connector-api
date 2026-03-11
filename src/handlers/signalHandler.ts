@@ -106,8 +106,6 @@ export const SignalHandler = {
       api_key: credentials.api_key,
       api_secret: credentials.api_secret,
       exchange_user_id: credentials.exchange_user_id,
-      encrypted_api_key: credentials.encrypted_api_key,
-      encrypted_api_secret: credentials.encrypted_api_secret,
       action: body.action as SignalAction,
       overrides: {
         order_type: body.order_type,
@@ -128,7 +126,8 @@ export const SignalHandler = {
     });
 
     const latency_ms = Date.now() - start;
-
+    console.log('[SignalHandler] Processed:', body.action, autotrader.symbol, latency_ms);
+    
     return c.json({
       ok: true,
       action: body.action,

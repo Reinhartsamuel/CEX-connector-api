@@ -4,7 +4,7 @@ import Redis from "ioredis";
 import JSONbig from "json-bigint";
 import { postgresDb } from "../db/client";
 import { exchanges, Trade, trades } from "../db/schema";
-import { and, desc, eq } from "drizzle-orm";
+import { and, desc, eq, inArray } from "drizzle-orm";
 import crypto from "crypto";
 
 // ---- Redis Setup ---- //
@@ -45,6 +45,34 @@ const connections = new Map<string, UserConnection>();
     }
   });
 })();
+
+// ---- Restore connections for users with active trades on startup ---- //
+async function restoreConnections() {
+  console.log("[Tokocrypto WS] Restoring connections for users with active trades...");
+
+  try {
+    const activeTrades = await postgresDb
+      .selectDistinct({ exchange_user_id: exchanges.exchange_user_id })
+      .from(trades)
+      .innerJoin(exchanges, eq(trades.exchange_id, exchanges.id))
+      .where(
+        and(
+          eq(exchanges.exchange_title, "tokocrypto"),
+          inArray(trades.status, ["waiting_position", "partially_filled", "waiting_targets"]),
+        ),
+      );
+
+    console.log(`[Tokocrypto WS] Found ${activeTrades.length} users with active trades to reconnect`);
+
+    for (const { exchange_user_id } of activeTrades) {
+      ensureConnection(exchange_user_id);
+    }
+  } catch (err) {
+    console.error("[Tokocrypto WS] Failed to restore connections on startup:", err);
+  }
+}
+
+restoreConnections();
 
 // ---- Fetch Tokocrypto credentials from Redis ---- //
 async function fetchCreds(userId: string) {

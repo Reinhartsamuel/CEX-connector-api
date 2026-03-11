@@ -560,9 +560,7 @@ export const GateHandler = {
         api_key,
         api_secret,
         user_id,
-        exchange_user_id,
-        encrypted_api_key,
-        encrypted_api_secret } =
+        exchange_user_id } =
         await GateHandler.unwrapCredentials(body.exchange_id);
       GateServices.initialize(api_key, api_secret);
       api_key = "";
@@ -614,14 +612,7 @@ export const GateHandler = {
 
       allReturn.data = { resPlaceOrder };
 
-      // Store credentials and trigger WebSocket connection
-      await redis.hset(
-        `gate:creds:${exchange_user_id}`,
-        "apiKey",
-        encrypted_api_key,
-        "apiSecret",
-        encrypted_api_secret,
-      );
+      // Trigger WebSocket connection — worker decrypts creds from DB via KMS
       await redis.publish(
         "ws-control",
         JSON.stringify({

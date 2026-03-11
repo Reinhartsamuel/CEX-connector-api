@@ -25,8 +25,6 @@ export interface ExecutorContext {
   api_key: string;
   api_secret: string;
   exchange_user_id: string;
-  encrypted_api_key: string;
-  encrypted_api_secret: string;
   action: SignalAction;
   overrides: SignalOverrides;
 }
