@@ -195,9 +195,11 @@ export const webhooks = pgTable('webhooks', {
   id: serial('id').primaryKey(),
   user_id: integer('user_id').notNull().references(() => users.id, { onDelete: 'cascade' }),
   exchange_id: integer('exchange_id').notNull().references(() => exchanges.id, { onDelete: 'cascade' }),
+  autotrader_id: integer('autotrader_id').references(() => autotraders.id, { onDelete: 'set null' }),
   action: text('action').notNull(), // 'place_order', 'close_position', 'cancel_order', etc.
   payload: jsonb('payload').notNull(), // Original webhook payload
   status: text('status').default('pending'), // 'pending', 'open', 'finished', 'completed', 'failed'
+  error_message: text('error_message'), // populated when status = 'failed'
   type:text('type').default('subscription'), // 'subscription', 'personal'
   processed_at: timestamp('processed_at', { withTimezone: true }),
   created_at: timestamp('created_at', { withTimezone: true }).defaultNow(),

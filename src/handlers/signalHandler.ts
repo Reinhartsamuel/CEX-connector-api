@@ -1,7 +1,7 @@
 import { Context } from 'hono';
 import { z } from 'zod';
 import { postgresDb } from '../db/client';
-import { autotraders, exchanges } from '../db/schema';
+import { autotraders, exchanges, webhooks, webhook_responses } from '../db/schema';
 import { eq } from 'drizzle-orm';
 import { GateHandler } from './gate/gateHandler';
 import { getExecutor } from '../executors/registry';
@@ -82,24 +82,43 @@ export const SignalHandler = {
       return c.json({ error: 'Exchange configuration not found' }, 500);
     }
 
-    // 5. Decrypt credentials via KMS
+    // 5. Record the webhook attempt now that we have user_id + exchange_id
+    const [webhookRow] = await postgresDb.insert(webhooks).values({
+      user_id: autotrader.user_id,
+      exchange_id: autotrader.exchange_id,
+      autotrader_id: autotrader.id,
+      action: body.action,
+      payload: body as unknown as Record<string, unknown>,
+      status: 'pending',
+      type: 'personal',
+    }).returning({ id: webhooks.id });
+
+    const markWebhook = async (status: string, error_message?: string) => {
+      await postgresDb.update(webhooks)
+        .set({ status, error_message: error_message ?? null, processed_at: new Date() })
+        .where(eq(webhooks.id, webhookRow.id));
+    };
+
+    // 6. Decrypt credentials via KMS
     let credentials: Awaited<ReturnType<typeof GateHandler.unwrapCredentials>>;
     try {
       credentials = await GateHandler.unwrapCredentials(autotrader.exchange_id);
     } catch (err) {
       console.error('[SignalHandler] KMS decrypt failed:', err);
+      await markWebhook('failed', 'Failed to load exchange credentials');
       return c.json({ error: 'Failed to load exchange credentials' }, 500);
     }
 
-    // 6. Get the right executor for this exchange
+    // 7. Get the right executor for this exchange
     let executor;
     try {
       executor = getExecutor(exchange.exchange_title);
     } catch (err) {
+      await markWebhook('failed', (err as Error).message);
       return c.json({ error: (err as Error).message }, 422);
     }
 
-    // 7. Respond immediately so TradingView doesn't time out, execute in background
+    // 8. Respond immediately so TradingView doesn't time out, execute in background
     const execCtx = {
       autotrader,
       exchange,
@@ -115,14 +134,52 @@ export const SignalHandler = {
       },
     };
 
-    executor.execute(execCtx).then((result) => {
+    const safeJson = (v: unknown): Record<string, unknown> => {
+      if (v == null) return {};
+      try { return JSON.parse(JSON.stringify(v)); } catch { return {}; }
+    };
+
+    executor.execute(execCtx).then(async (result) => {
       if (!result.success) {
         console.error('[SignalHandler] Executor failed:', result.error);
+        await Promise.all([
+          markWebhook('failed', result.error),
+          postgresDb.insert(webhook_responses).values({
+            webhook_id: webhookRow.id,
+            user_id: autotrader.user_id,
+            exchange_id: autotrader.exchange_id,
+            response_status: 422,
+            response_body: safeJson(result.raw),
+            error_message: result.error ?? null,
+          }),
+        ]);
       } else {
         console.log('[SignalHandler] Executed:', body.action, autotrader.symbol, result.exchange_order_id);
+        await Promise.all([
+          markWebhook('completed'),
+          postgresDb.insert(webhook_responses).values({
+            webhook_id: webhookRow.id,
+            user_id: autotrader.user_id,
+            exchange_id: autotrader.exchange_id,
+            response_status: 200,
+            response_body: safeJson(result.raw),
+          }),
+        ]);
       }
-    }).catch((err) => {
+    }).catch(async (err) => {
       console.error('[SignalHandler] Executor threw:', err);
+      const errMsg = (err as Error).message ?? String(err);
+      await Promise.all([
+        markWebhook('failed', errMsg),
+        postgresDb.insert(webhook_responses).values({
+          webhook_id: webhookRow.id,
+          user_id: autotrader.user_id,
+          exchange_id: autotrader.exchange_id,
+          response_status: 500,
+          response_body: {},
+          error_message: errMsg,
+        }),
+      ]);
     });
 
     const latency_ms = Date.now() - start;

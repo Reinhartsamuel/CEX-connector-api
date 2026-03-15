@@ -188,7 +188,7 @@ async function openPosition(ctx: ExecutorContext): Promise<ExecutorResult> {
       price: priceStr,
       // For market orders: Gate returns fill_price and finish_time in the same REST response
       open_fill_price: orderFilled ? (resPlaceOrder.fill_price ?? resPlaceOrder.price) : undefined,
-      open_filled_at: orderFilled && resPlaceOrder.finish_time ? Number(resPlaceOrder.finish_time) : undefined,
+      open_filled_at: orderFilled && resPlaceOrder.finish_time ? Math.floor(Number(resPlaceOrder.finish_time)) : undefined,
       reduce_only: false,
       is_tpsl: false,
       take_profit_enabled: overrides.take_profit?.enabled ?? false,
