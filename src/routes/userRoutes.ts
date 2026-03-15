@@ -781,6 +781,140 @@ userRouter.get('/trades',
   }
 );
 
+// GET /sse/trades — streams trade updates for the authenticated user
+userRouter.get('/sse/trades',
+  jwt({ secret: process.env.JWT_SECRET! }),
+  async (c) => {
+    const payload = c.get('jwtPayload');
+    const user_id = Number(payload.sub);
+
+    const stream = new ReadableStream({
+      async start(controller) {
+        const enc = new TextEncoder();
+        const send = (data: unknown) => controller.enqueue(enc.encode(`data: ${JSON.stringify(data)}\n\n`));
+
+        // Send a heartbeat every 30s to keep the connection alive
+        const heartbeat = setInterval(() => {
+          try { controller.enqueue(enc.encode(': ping\n\n')); } catch { /* closed */ }
+        }, 30_000);
+
+        const sub = new Redis(process.env.REDIS_URL || 'redis://127.0.0.1:6379');
+        await sub.subscribe(`user:${user_id}:orders:chan`);
+
+        sub.on('message', async (_ch, _message) => {
+          try {
+            // Re-fetch the latest trades from DB so the client gets clean, formatted data
+            const results = await postgresDb
+              .select({
+                id: trades.id,
+                contract: trades.contract,
+                position_type: trades.position_type,
+                market_type: trades.market_type,
+                size: trades.size,
+                price: trades.price,
+                status: trades.status,
+                pnl: trades.pnl,
+                pnl_margin: trades.pnl_margin,
+                open_filled_at: trades.open_filled_at,
+                created_at: trades.created_at,
+                exchange_title: exchanges.exchange_title,
+                exchange_user_id: exchanges.exchange_user_id,
+                autotrader_symbol: autotraders.symbol,
+              })
+              .from(trades)
+              .innerJoin(exchanges, eq(trades.exchange_id, exchanges.id))
+              .innerJoin(autotraders, eq(trades.autotrader_id, autotraders.id))
+              .where(and(eq(trades.user_id, user_id), eq(trades.is_tpsl, false)))
+              .orderBy(desc(trades.created_at))
+              .limit(50);
+            send({ type: 'trades', data: results });
+          } catch (err) {
+            console.error('[SSE /sse/trades] DB fetch error:', err);
+          }
+        });
+
+        c.req.raw.signal.addEventListener('abort', async () => {
+          clearInterval(heartbeat);
+          await sub.unsubscribe(`user:${user_id}:orders:chan`);
+          sub.disconnect();
+          controller.close();
+        }, { once: true });
+      },
+    });
+
+    return c.body(stream, 200, { 'Content-Type': 'text/event-stream', 'Cache-Control': 'no-cache', 'Connection': 'keep-alive' });
+  }
+);
+
+// GET /sse/autotraders/:id/trades — streams trade updates for a specific autotrader
+userRouter.get('/sse/autotraders/:id/trades',
+  jwt({ secret: process.env.JWT_SECRET! }),
+  async (c) => {
+    const payload = c.get('jwtPayload');
+    const user_id = Number(payload.sub);
+    const autotrader_id = Number(c.req.param('id'));
+
+    const stream = new ReadableStream({
+      async start(controller) {
+        const enc = new TextEncoder();
+        const send = (data: unknown) => controller.enqueue(enc.encode(`data: ${JSON.stringify(data)}\n\n`));
+
+        const heartbeat = setInterval(() => {
+          try { controller.enqueue(enc.encode(': ping\n\n')); } catch { /* closed */ }
+        }, 30_000);
+
+        const sub = new Redis(process.env.REDIS_URL || 'redis://127.0.0.1:6379');
+        await sub.subscribe(`user:${user_id}:orders:chan`);
+
+        sub.on('message', async (_ch, _message) => {
+          try {
+            const results = await postgresDb
+              .select({
+                id: trades.id,
+                trade_id: trades.trade_id,
+                contract: trades.contract,
+                position_type: trades.position_type,
+                market_type: trades.market_type,
+                size: trades.size,
+                price: trades.price,
+                leverage: trades.leverage,
+                leverage_type: trades.leverage_type,
+                status: trades.status,
+                position_status: trades.position_status,
+                pnl: trades.pnl,
+                pnl_margin: trades.pnl_margin,
+                open_fill_price: trades.open_fill_price,
+                close_fill_price: trades.close_fill_price,
+                created_at: trades.created_at,
+                updated_at: trades.updated_at,
+              })
+              .from(trades)
+              .where(and(
+                eq(trades.autotrader_id, autotrader_id),
+                eq(trades.user_id, user_id),
+                eq(trades.is_tpsl, false),
+              ))
+              .orderBy(desc(trades.created_at))
+              .limit(10);
+            send({ type: 'trades', data: results });
+          } catch (err) {
+            console.error('[SSE /sse/autotraders/:id/trades] DB fetch error:', err);
+          }
+        });
+
+        c.req.raw.signal.addEventListener('abort', async () => {
+          clearInterval(heartbeat);
+          await sub.unsubscribe(`user:${user_id}:orders:chan`);
+          sub.disconnect();
+          controller.close();
+        }, { once: true });
+      },
+    });
+
+    return c.body(stream, 200, { 'Content-Type': 'text/event-stream', 'Cache-Control': 'no-cache', 'Connection': 'keep-alive' });
+  }
+);
+
 userRouter.patch('/autotraders/:id/status',
   jwt({ secret: process.env.JWT_SECRET! }),
   async (c) => {
