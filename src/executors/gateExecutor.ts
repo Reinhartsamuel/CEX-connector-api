@@ -22,7 +22,7 @@ export const GateExecutor: ExchangeExecutor = {
 
     try {
       if (action === 'CLOSE') {
-        return await closePosition(ctx);
+        return await closePositionAtMarketPrice(ctx);
       }
       if (action === 'BUY' || action === 'SELL') {
         return await openPosition(ctx);
@@ -53,7 +53,7 @@ async function openPosition(ctx: ExecutorContext): Promise<ExecutorResult> {
   const leverage = autotrader.leverage;
   const leverage_type = (autotrader.leverage_type || 'ISOLATED') as 'ISOLATED' | 'CROSS';
   const position_type = action === 'BUY' ? 'long' : 'short';
-  const size = computeSize(autotrader);
+  const size = computeSize(autotrader, overrides);
 
   // Resolve order type and price from signal override, defaulting to market
   const order_type = overrides.order_type ?? 'market';
@@ -65,11 +65,12 @@ async function openPosition(ctx: ExecutorContext): Promise<ExecutorResult> {
   // This prevents the race condition where market orders fill instantly
   // before the WS worker has subscribed to order/position events.
   // Worker decrypts credentials from DB via KMS — no plaintext in Redis.
-  await redis.publish('ws-control', JSON.stringify({
-    op: 'open',
-    userId: String(exchange_user_id),
-    contract,
-  }));
+  await redis.xadd(
+    'ws-control:gate', '*',
+    'op', 'open',
+    'userId', String(exchange_user_id),
+    'contract', contract,
+  );
 
   // Wait for the worker to signal it's connected and subscribed (5s timeout).
   // On timeout we proceed anyway — the reconciliation snapshot will catch up.
@@ -210,7 +211,7 @@ async function openPosition(ctx: ExecutorContext): Promise<ExecutorResult> {
   };
 }
 
-async function closePosition(ctx: ExecutorContext): Promise<ExecutorResult> {
+async function closePositionAtMarketPrice(ctx: ExecutorContext): Promise<ExecutorResult> {
   const { autotrader } = ctx;
   const contract = toGateContract(autotrader.symbol);
 
@@ -240,7 +241,7 @@ async function closePosition(ctx: ExecutorContext): Promise<ExecutorResult> {
 
       if (!res?.id) {
         const errMsg = res?.message || res?.label || JSON.stringify(res);
-        console.error('[GateExecutor] closePosition placeFuturesOrder failed:', errMsg);
+        console.error('[GateExecutor] closePositionAtMarketPrice placeFuturesOrder failed:', errMsg);
       }
 
       return { trade, res };
@@ -275,11 +276,29 @@ async function closePosition(ctx: ExecutorContext): Promise<ExecutorResult> {
 }
 
 /**
- * Compute contract size (number of contracts) from the autotrader's capital setting.
- * Gate.io futures size = number of contracts (each contract = 1 unit of base asset by default).
- * For now we use initial_investment as the contract count directly.
- * TODO: factor in current price and contract multiplier for USD-denominated sizing.
+ * Compute contract size (number of contracts) for Gate.io futures.
+ * Formula: floor((capital * leverage) / (price * contract_value_multiplier))
+ * - capital = initial_investment (USDT margin allocated)
+ * - price = market_price from signal (current mark/last price sent by TradingView)
+ * - contract_value_multiplier = quanto_multiplier from Gate contract spec (coins per contract)
+ * Errors loudly if either required field is missing — never silently falls back to wrong sizing.
  */
-function computeSize(autotrader: Autotrader): number {
-  return Math.floor(Number(autotrader.initial_investment));
+function computeSize(autotrader: Autotrader, overrides: import('./types').SignalOverrides): number {
+  const multiplier = autotrader.contract_value_multiplier;
+  if (!multiplier || Number(multiplier) <= 0) {
+    throw new Error(
+      `[GateExecutor] contract_value_multiplier is not set on autotrader ${autotrader.id} (${autotrader.symbol}). ` +
+      `Set it to the Gate quanto_multiplier for this contract before trading.`
+    );
+  }
+  const price = overrides.order_type === 'limit' ? overrides.price : overrides.market_price;
+  if (!price || price <= 0) {
+    throw new Error(
+      `[GateExecutor] price is required for contract sizing. ` +
+      `For market orders send market_price in the signal payload; for limit orders send price.`
+    );
+  }
+  const capital = Number(autotrader.initial_investment);
+  const leverage = autotrader.leverage;
+  return Math.floor((capital * leverage) / (price * Number(multiplier)));
 }

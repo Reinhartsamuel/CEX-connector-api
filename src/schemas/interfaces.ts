@@ -163,3 +163,95 @@ export interface TokocryptoServiceConfig {
   credentials: TokocryptoCredentials | null;
   baseUrl: string;
 }
+
+// Bitget interfaces
+export interface BitgetOrder {
+  contract: string;
+  position_type: 'long' | 'short';
+  market_type: 'market' | 'limit';
+  size: number;
+  price?: string;
+  reduce_only?: boolean;
+  take_profit?: {
+    enabled: boolean;
+    price: number;
+    price_type?: string;
+  };
+  stop_loss?: {
+    enabled: boolean;
+    price: number;
+    price_type?: string;
+  };
+}
+
+export interface BitgetCredentials {
+  key: string;
+  secret: string;
+  passphrase: string;
+}
+
+export interface BitgetServiceConfig {
+  credentials: BitgetCredentials;
+  baseUrl: string;
+}
+
+// MEXC interfaces
+export interface MexcOrder {
+  contract: string;
+  position_type: 'long' | 'short';
+  market_type: 'market' | 'limit';
+  size: number;
+  price?: string;
+  reduce_only?: boolean;
+  take_profit?: {
+    enabled: boolean;
+    price: number;
+    price_type?: string;
+  };
+  stop_loss?: {
+    enabled: boolean;
+    price: number;
+    price_type?: string;
+  };
+}
+
+export interface MexcCredentials {
+  key: string;
+  secret: string;
+}
+
+export interface MexcServiceConfig {
+  credentials: MexcCredentials;
+  baseUrl: string;
+}
+
+// BitMart interfaces
+export interface BitmartOrder {
+  contract: string;
+  position_type: 'long' | 'short';
+  market_type: 'market' | 'limit';
+  size: number;
+  price?: string;
+  reduce_only?: boolean;
+  take_profit?: {
+    enabled: boolean;
+    price: number;
+    price_type?: string;
+  };
+  stop_loss?: {
+    enabled: boolean;
+    price: number;
+    price_type?: string;
+  };
+}
+
+export interface BitmartCredentials {
+  key: string;
+  secret: string;
+  memo: string;
+}
+
+export interface BitmartServiceConfig {
+  credentials: BitmartCredentials;
+  baseUrl: string;
+}

@@ -1,9 +1,8 @@
 /* eslint-disable @typescript-eslint/no-explicit-any */
 import { Context } from "hono";
-import { TokocryptoServices } from "../../services/tokocryptoServices";
-import type { TokocryptoOrder } from "../../schemas/interfaces";
+import { MexcServices } from "../../services/mexcServices";
+import type { MexcOrder } from "../../schemas/interfaces";
 import * as z from "zod";
-import Redis from "ioredis";
 import { postgresDb } from "../../db/client";
 import { exchanges, trades } from "../../db/schema";
 import { and, eq } from "drizzle-orm";
@@ -15,16 +14,16 @@ import {
   getOrDecryptDEK,
 } from "../../utils/cryptography/kmsUtils";
 import {
-  tokocryptoRegisterUserSchema,
-  tokocryptoPlaceOrderSchema,
-  tokocryptoCancelOrderSchema,
-  tokocryptoClosePositionSchema,
-} from "../../schemas/tokocryptoSchemas";
+  mexcRegisterUserSchema,
+  mexcPlaceOrderSchema,
+  mexcCancelOrderSchema,
+  mexcClosePositionSchema,
+} from "../../schemas/mexcSchemas";
 
-export const TokocryptoHandler = {
+export const MexcHandler = {
   /**
-    Unwraps and decrypts the credentials for a given exchange ID.
-  */
+   * Unwraps and decrypts the credentials for a given exchange ID.
+   */
   unwrapCredentials: async function (exchangeId: number): Promise<{
     api_key: string;
     api_secret: string;
@@ -56,17 +55,17 @@ export const TokocryptoHandler = {
   registerUser: async function (c: Context) {
     try {
       const body = (await c.req.json()) as z.infer<
-        typeof tokocryptoRegisterUserSchema
+        typeof mexcRegisterUserSchema
       >;
       let { api_key, api_secret, user_id } = body;
 
-      // Initialize CCXT with credentials
-      TokocryptoServices.initialize(api_key, api_secret, 'future');
+      // Initialize with credentials
+      MexcServices.initialize(api_key, api_secret);
 
       // Check if exchange already registered
       const existing = await postgresDb.query.exchanges.findFirst({
         where: and(
-          eq(exchanges.exchange_title, "tokocrypto"),
+          eq(exchanges.exchange_title, "mexc"),
           eq(exchanges.user_id, user_id),
         ),
       });
@@ -75,16 +74,16 @@ export const TokocryptoHandler = {
         return c.json(
           {
             message: "ERROR!",
-            error: `exchange already registered for 'tokocrypto' user_id ${user_id} with exchange id ${existing.id}`,
+            error: `exchange already registered for 'mexc' user_id ${user_id} with exchange id ${existing.id}`,
           },
           { status: 400 },
         );
 
       // Validate credentials by fetching account balance
-      const balance = await TokocryptoServices.fetchBalance();
+      const balance = await MexcServices.fetchBalance();
 
       // Clear credentials from service
-      TokocryptoServices.clearCredentials();
+      MexcServices.clearCredentials();
 
       if (balance.status === "error")
         return c.json(
@@ -94,11 +93,11 @@ export const TokocryptoHandler = {
           { status: balance.statusCode },
         );
 
-      // Extract user ID from balance info (Tokocrypto uses Binance structure)
+      // Extract user ID from balance info
       const accountInfo = balance.info || {};
-      const tokocryptoUserId = accountInfo.uid || `toko_${user_id}`;
+      const mexcUserId = accountInfo.uid || `mexc_${user_id}`;
 
-      // Encrypt credentials using KMS
+      // Encrypt credentials using KMS (no passphrase for MEXC)
       const {
         encryptedDEK,
         apiKey: encryptedApiKey,
@@ -108,7 +107,7 @@ export const TokocryptoHandler = {
         api_secret,
       );
 
-      // Clear plaintext credentials from memory
+      // clear memory
       api_key = '';
       api_secret = '';
 
@@ -121,8 +120,8 @@ export const TokocryptoHandler = {
         .insert(exchanges)
         .values({
           user_id,
-          exchange_title: "tokocrypto",
-          exchange_user_id: tokocryptoUserId,
+          exchange_title: "mexc",
+          exchange_user_id: mexcUserId,
           market_type: "futures",
           api_key_encrypted: apiKeyCiphertext,
           api_secret_encrypted: apiSecretCiphertext,
@@ -139,7 +138,7 @@ export const TokocryptoHandler = {
         exchangeRecord,
       });
     } catch (e) {
-      console.error(e, "ERROR 500 REGISTER USER tokocryptoServices");
+      console.error(e, "ERROR 500 REGISTER USER mexc");
       if (e instanceof Error) {
         return c.json(
           {
@@ -161,7 +160,7 @@ export const TokocryptoHandler = {
 
   order: async function (c: Context) {
     try {
-      const body = await c.req.json() as z.infer<typeof tokocryptoPlaceOrderSchema>;
+      const body = await c.req.json() as z.infer<typeof mexcPlaceOrderSchema>;
 
       // Unwrap credentials
       let {
@@ -169,10 +168,10 @@ export const TokocryptoHandler = {
         api_secret,
         user_id,
         exchange_user_id
-      } = await TokocryptoHandler.unwrapCredentials(body.exchange_id);
+      } = await MexcHandler.unwrapCredentials(body.exchange_id);
 
       // Initialize CCXT service
-      TokocryptoServices.initialize(api_key, api_secret, body.market);
+      MexcServices.initialize(api_key, api_secret);
 
       // Clear credentials from memory immediately
       api_key = '';
@@ -183,46 +182,35 @@ export const TokocryptoHandler = {
         data: {},
       };
 
-      // Update position mode, leverage, and margin mode (futures only)
-      if (body.market === 'futures') {
-        // 1. Set position mode (hedge mode = true allows simultaneous long/short)
-        const hedgeMode = (body.position_mode || 'hedge') === 'hedge';
-        const resPositionMode = await TokocryptoServices.updatePositionMode(hedgeMode);
-        allReturn.data.resPositionMode = resPositionMode;
+      // Update leverage and margin mode (futures only)
+      const resLeverage = await MexcServices.updateLeverage(
+        body.contract,
+        body.leverage
+      );
+      allReturn.data.resLeverage = resLeverage;
 
-        // 2. Set leverage for the symbol
-        const resLeverage = await TokocryptoServices.updateLeverage(
-          body.contract,
-          body.leverage
-        );
-        allReturn.data.resLeverage = resLeverage;
-
-        // 3. Set margin mode (ISOLATED or CROSS)
-        const resMarginMode = await TokocryptoServices.updateMarginMode(
-          body.contract,
-          body.leverage_type
-        );
-        allReturn.data.resMarginMode = resMarginMode;
-      }
+      const resMarginMode = await MexcServices.updateMarginMode(
+        body.contract,
+        body.leverage_type
+      );
+      allReturn.data.resMarginMode = resMarginMode;
 
       // Build order payload
-      const orderPayload: TokocryptoOrder = {
+      const orderPayload: MexcOrder = {
         contract: body.contract,
         position_type: body.position_type,
         market_type: body.market_type,
         size: body.size,
         price: body.price,
         reduce_only: body.reduce_only,
-        take_profit: body.take_profit,
-        stop_loss: body.stop_loss,
       };
 
       // Place order via CCXT
-      const ccxtOrder = await TokocryptoServices.placeOrder(orderPayload);
+      const ccxtOrder = await MexcServices.placeOrder(orderPayload);
       allReturn.data.ccxtOrder = ccxtOrder;
 
       // Map CCXT status to DB status
-      const tradeStatus = TokocryptoServices.mapCcxtStatusToDb(
+      const tradeStatus = MexcServices.mapCcxtStatusToDb(
         ccxtOrder.status,
         body.market_type
       );
@@ -245,20 +233,6 @@ export const TokocryptoHandler = {
         status: tradeStatus,
         reduce_only: body.reduce_only,
         is_tpsl: false,
-
-        // Take profit tracking
-        take_profit_enabled: body.take_profit.enabled,
-        take_profit_executed: body.take_profit.enabled && ccxtOrder.status === 'closed',
-        take_profit_price: body.take_profit.enabled ? String(body.take_profit.price) : null,
-        take_profit_price_type: body.take_profit.enabled ? body.take_profit.price_type : null,
-
-        // Stop loss tracking
-        stop_loss_enabled: body.stop_loss.enabled,
-        stop_loss_executed: body.stop_loss.enabled && ccxtOrder.status === 'closed',
-        stop_loss_price: body.stop_loss.enabled ? String(body.stop_loss.price) : null,
-        stop_loss_price_type: body.stop_loss.enabled ? body.stop_loss.price_type : null,
-
-        // Store full CCXT response as metadata
         metadata: JSON.parse(JSONbig.stringify(ccxtOrder)),
       };
 
@@ -270,25 +244,23 @@ export const TokocryptoHandler = {
 
       allReturn.data.newTrade = newTrade;
 
-      // Publish WebSocket control message
-      await redis.publish(
-        "ws-control",
-        JSON.stringify({
-          op: "open",
-          userId: String(exchange_user_id),
-          contract: body.contract,
-        }),
+      // Publish WebSocket control message to Redis Stream
+      await redis.xadd(
+        'ws-control:mexc', '*',
+        'op', 'open',
+        'userId', String(exchange_user_id),
+        'contract', body.contract,
       );
 
       // Clear CCXT credentials
-      TokocryptoServices.clearCredentials();
+      MexcServices.clearCredentials();
 
       return c.json(allReturn);
     } catch (e) {
-      console.error(e, "ERROR 500 ORDER tokocryptoServices");
+      console.error(e, "ERROR 500 ORDER mexc");
 
       // Clear credentials on error
-      TokocryptoServices.clearCredentials();
+      MexcServices.clearCredentials();
 
       if (e instanceof Error) {
         return c.json(
@@ -311,12 +283,12 @@ export const TokocryptoHandler = {
 
   cancelOrder: async function (c: Context) {
     try {
-      const body = await c.req.json() as z.infer<typeof tokocryptoCancelOrderSchema>;
+      const body = await c.req.json() as z.infer<typeof mexcCancelOrderSchema>;
 
       let { api_key, api_secret, user_id } =
-        await TokocryptoHandler.unwrapCredentials(body.exchange_id);
+        await MexcHandler.unwrapCredentials(body.exchange_id);
 
-      TokocryptoServices.initialize(api_key, api_secret);
+      MexcServices.initialize(api_key, api_secret);
       api_key = '';
       api_secret = '';
 
@@ -331,7 +303,7 @@ export const TokocryptoHandler = {
       // Cancel all orders using Promise.allSettled
       const results = await Promise.allSettled(
         foundTrades.map(async (trade) => {
-          const resultCancel = await TokocryptoServices.cancelOrder(
+          const resultCancel = await MexcServices.cancelOrder(
             trade.order_id,
             trade.contract
           );
@@ -348,17 +320,17 @@ export const TokocryptoHandler = {
               .set({ status: 'cancelled' })
               .where(eq(trades.id, result.value.id));
           } else {
-            console.log(`Cancelling status: ${result.status} failed!!!`);
+            console.log(`Canceling status: ${result.status} failed!!!`);
           }
         })
       );
 
-      TokocryptoServices.clearCredentials();
+      MexcServices.clearCredentials();
 
       return c.json(results);
     } catch (e) {
-      console.error(e, "ERROR 500 CANCEL ORDER tokocryptoServices");
-      TokocryptoServices.clearCredentials();
+      console.error(e, "ERROR 500 CANCEL ORDER mexc");
+      MexcServices.clearCredentials();
 
       if (e instanceof Error) {
         return c.json(
@@ -381,12 +353,12 @@ export const TokocryptoHandler = {
 
   closePositionDb: async function (c: Context) {
     try {
-      const body = await c.req.json() as z.infer<typeof tokocryptoClosePositionSchema>;
+      const body = await c.req.json() as z.infer<typeof mexcClosePositionSchema>;
 
       const { api_key, api_secret, user_id } =
-        await TokocryptoHandler.unwrapCredentials(body.exchange_id);
+        await MexcHandler.unwrapCredentials(body.exchange_id);
 
-      TokocryptoServices.initialize(api_key, api_secret);
+      MexcServices.initialize(api_key, api_secret);
 
       // Find all running trades for this contract
       const running_trades = await postgresDb.query.trades.findMany({
@@ -401,15 +373,15 @@ export const TokocryptoHandler = {
       const closed_trades = await Promise.all(
         running_trades.map(async (trade) => {
           // Create reverse order to close position
-          const closePayload: TokocryptoOrder = {
+          const closePayload: MexcOrder = {
             contract: trade.contract,
-            position_type: trade.position_type === 'long' ? 'short' : 'long', // Opposite direction
+            position_type: trade.position_type === 'long' ? 'short' : 'long',
             market_type: 'market',
             size: Math.abs(parseFloat(trade.size)),
             reduce_only: true,
           };
 
-          const ccxtOrder = await TokocryptoServices.placeOrder(closePayload);
+          const ccxtOrder = await MexcServices.placeOrder(closePayload);
 
           // Update trade record if close order filled
           if (ccxtOrder.status === 'closed' && ccxtOrder.filled === ccxtOrder.amount) {
@@ -430,7 +402,7 @@ export const TokocryptoHandler = {
         }),
       );
 
-      TokocryptoServices.clearCredentials();
+      MexcServices.clearCredentials();
 
       return c.json({
         running_trades,
@@ -438,8 +410,8 @@ export const TokocryptoHandler = {
         closed_trades,
       });
     } catch (e) {
-      console.error(e, "ERROR 500 CLOSE POSITION tokocryptoServices");
-      TokocryptoServices.clearCredentials();
+      console.error(e, "ERROR 500 CLOSE POSITION mexc");
+      MexcServices.clearCredentials();
 
       if (e instanceof Error) {
         return c.json(
@@ -466,22 +438,22 @@ export const TokocryptoHandler = {
       const { exchange_id, method, endpoint, params } = body;
 
       const { api_key, api_secret } =
-        await TokocryptoHandler.unwrapCredentials(exchange_id);
+        await MexcHandler.unwrapCredentials(exchange_id);
 
-      TokocryptoServices.initialize(api_key, api_secret);
+      MexcServices.initialize(api_key, api_secret);
 
-      const result = await TokocryptoServices.whitelistedRequest({
+      const result = await MexcServices.whitelistedRequest({
         method,
         endpoint,
         params,
       });
 
-      TokocryptoServices.clearCredentials();
+      MexcServices.clearCredentials();
 
       return c.json(result);
     } catch (e) {
-      console.error(e, "ERROR 500 PLAYGROUND tokocryptoServices");
-      TokocryptoServices.clearCredentials();
+      console.error(e, "ERROR 500 PLAYGROUND mexc");
+      MexcServices.clearCredentials();
 
       if (e instanceof Error) {
         return c.json(

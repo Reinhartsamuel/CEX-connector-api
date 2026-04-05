@@ -1,9 +1,8 @@
 /* eslint-disable @typescript-eslint/no-explicit-any */
 import { Context } from "hono";
-import { TokocryptoServices } from "../../services/tokocryptoServices";
-import type { TokocryptoOrder } from "../../schemas/interfaces";
+import { BitgetServices } from "../../services/bitgetServices";
+import type { BitgetOrder } from "../../schemas/interfaces";
 import * as z from "zod";
-import Redis from "ioredis";
 import { postgresDb } from "../../db/client";
 import { exchanges, trades } from "../../db/schema";
 import { and, eq } from "drizzle-orm";
@@ -15,19 +14,20 @@ import {
   getOrDecryptDEK,
 } from "../../utils/cryptography/kmsUtils";
 import {
-  tokocryptoRegisterUserSchema,
-  tokocryptoPlaceOrderSchema,
-  tokocryptoCancelOrderSchema,
-  tokocryptoClosePositionSchema,
-} from "../../schemas/tokocryptoSchemas";
+  bitgetRegisterUserSchema,
+  bitgetPlaceOrderSchema,
+  bitgetCancelOrderSchema,
+  bitgetClosePositionSchema,
+} from "../../schemas/bitgetSchemas";
 
-export const TokocryptoHandler = {
+export const BitgetHandler = {
   /**
-    Unwraps and decrypts the credentials for a given exchange ID.
-  */
+   * Unwraps and decrypts the credentials for a given exchange ID.
+   */
   unwrapCredentials: async function (exchangeId: number): Promise<{
     api_key: string;
     api_secret: string;
+    api_passphrase: string;
     user_id: number;
     encrypted_api_key: string;
     encrypted_api_secret: string;
@@ -42,10 +42,12 @@ export const TokocryptoHandler = {
 
     const decryptedApiKey = decrypt(JSON.parse(exchange.api_key_encrypted), dek);
     const decryptedApiSecret = decrypt(JSON.parse(exchange.api_secret_encrypted), dek);
+    const decryptedApiPassphrase = decrypt(JSON.parse(exchange.api_passphrase_encrypted!), dek);
 
     return {
       api_key: decryptedApiKey,
       api_secret: decryptedApiSecret,
+      api_passphrase: decryptedApiPassphrase,
       user_id: exchange.user_id,
       encrypted_api_key: exchange.api_key_encrypted,
       encrypted_api_secret: exchange.api_secret_encrypted,
@@ -56,17 +58,17 @@ export const TokocryptoHandler = {
   registerUser: async function (c: Context) {
     try {
       const body = (await c.req.json()) as z.infer<
-        typeof tokocryptoRegisterUserSchema
+        typeof bitgetRegisterUserSchema
       >;
-      let { api_key, api_secret, user_id } = body;
+      let { api_key, api_secret, api_password, user_id } = body;
 
-      // Initialize CCXT with credentials
-      TokocryptoServices.initialize(api_key, api_secret, 'future');
+      // Initialize with credentials
+      BitgetServices.initialize(api_key, api_secret, api_password);
 
       // Check if exchange already registered
       const existing = await postgresDb.query.exchanges.findFirst({
         where: and(
-          eq(exchanges.exchange_title, "tokocrypto"),
+          eq(exchanges.exchange_title, "bitget"),
           eq(exchanges.user_id, user_id),
         ),
       });
@@ -75,16 +77,16 @@ export const TokocryptoHandler = {
         return c.json(
           {
             message: "ERROR!",
-            error: `exchange already registered for 'tokocrypto' user_id ${user_id} with exchange id ${existing.id}`,
+            error: `exchange already registered for 'bitget' user_id ${user_id} with exchange id ${existing.id}`,
           },
           { status: 400 },
         );
 
       // Validate credentials by fetching account balance
-      const balance = await TokocryptoServices.fetchBalance();
+      const balance = await BitgetServices.fetchBalance();
 
       // Clear credentials from service
-      TokocryptoServices.clearCredentials();
+      BitgetServices.clearCredentials();
 
       if (balance.status === "error")
         return c.json(
@@ -94,38 +96,43 @@ export const TokocryptoHandler = {
           { status: balance.statusCode },
         );
 
-      // Extract user ID from balance info (Tokocrypto uses Binance structure)
+      // Extract user ID from balance info
       const accountInfo = balance.info || {};
-      const tokocryptoUserId = accountInfo.uid || `toko_${user_id}`;
+      const bitgetUserId = accountInfo.uid || `bitget_${user_id}`;
 
       // Encrypt credentials using KMS
       const {
         encryptedDEK,
         apiKey: encryptedApiKey,
         apiSecret: encryptedApiSecret,
+        passphrase: encryptedPassphrase,
       } = await generateAndEncryptCredentials(
         api_key,
         api_secret,
+        api_password,
       );
 
-      // Clear plaintext credentials from memory
+      // clear memory
       api_key = '';
       api_secret = '';
+      api_password = '';
 
       // Serialize encrypted payloads for DB
       const apiKeyCiphertext = JSON.stringify(encryptedApiKey);
       const apiSecretCiphertext = JSON.stringify(encryptedApiSecret);
+      const passphraseCiphertext = JSON.stringify(encryptedPassphrase);
 
       // Insert into database
       const exchangeRecord = await postgresDb
         .insert(exchanges)
         .values({
           user_id,
-          exchange_title: "tokocrypto",
-          exchange_user_id: tokocryptoUserId,
+          exchange_title: "bitget",
+          exchange_user_id: bitgetUserId,
           market_type: "futures",
           api_key_encrypted: apiKeyCiphertext,
           api_secret_encrypted: apiSecretCiphertext,
+          api_passphrase_encrypted: passphraseCiphertext,
           enc_dek: encryptedDEK,
         })
         .returning({
@@ -139,7 +146,7 @@ export const TokocryptoHandler = {
         exchangeRecord,
       });
     } catch (e) {
-      console.error(e, "ERROR 500 REGISTER USER tokocryptoServices");
+      console.error(e, "ERROR 500 REGISTER USER bitget");
       if (e instanceof Error) {
         return c.json(
           {
@@ -161,68 +168,59 @@ export const TokocryptoHandler = {
 
   order: async function (c: Context) {
     try {
-      const body = await c.req.json() as z.infer<typeof tokocryptoPlaceOrderSchema>;
+      const body = await c.req.json() as z.infer<typeof bitgetPlaceOrderSchema>;
 
       // Unwrap credentials
       let {
         api_key,
         api_secret,
+        api_passphrase,
         user_id,
         exchange_user_id
-      } = await TokocryptoHandler.unwrapCredentials(body.exchange_id);
+      } = await BitgetHandler.unwrapCredentials(body.exchange_id);
 
       // Initialize CCXT service
-      TokocryptoServices.initialize(api_key, api_secret, body.market);
+      BitgetServices.initialize(api_key, api_secret, api_passphrase);
 
       // Clear credentials from memory immediately
       api_key = '';
       api_secret = '';
+      api_passphrase = '';
 
       const allReturn: { message: string; data: any } = {
         message: "ok",
         data: {},
       };
 
-      // Update position mode, leverage, and margin mode (futures only)
-      if (body.market === 'futures') {
-        // 1. Set position mode (hedge mode = true allows simultaneous long/short)
-        const hedgeMode = (body.position_mode || 'hedge') === 'hedge';
-        const resPositionMode = await TokocryptoServices.updatePositionMode(hedgeMode);
-        allReturn.data.resPositionMode = resPositionMode;
+      // Update leverage and margin mode (futures only)
+      const resLeverage = await BitgetServices.updateLeverage(
+        body.contract,
+        body.leverage
+      );
+      allReturn.data.resLeverage = resLeverage;
 
-        // 2. Set leverage for the symbol
-        const resLeverage = await TokocryptoServices.updateLeverage(
-          body.contract,
-          body.leverage
-        );
-        allReturn.data.resLeverage = resLeverage;
-
-        // 3. Set margin mode (ISOLATED or CROSS)
-        const resMarginMode = await TokocryptoServices.updateMarginMode(
-          body.contract,
-          body.leverage_type
-        );
-        allReturn.data.resMarginMode = resMarginMode;
-      }
+      const resMarginMode = await BitgetServices.updateMarginMode(
+        body.contract,
+        body.leverage_type
+      );
+      allReturn.data.resMarginMode = resMarginMode;
 
       // Build order payload
-      const orderPayload: TokocryptoOrder = {
+      const orderPayload: BitgetOrder = {
         contract: body.contract,
         position_type: body.position_type,
         market_type: body.market_type,
         size: body.size,
         price: body.price,
         reduce_only: body.reduce_only,
-        take_profit: body.take_profit,
-        stop_loss: body.stop_loss,
       };
 
       // Place order via CCXT
-      const ccxtOrder = await TokocryptoServices.placeOrder(orderPayload);
+      const ccxtOrder = await BitgetServices.placeOrder(orderPayload);
       allReturn.data.ccxtOrder = ccxtOrder;
 
       // Map CCXT status to DB status
-      const tradeStatus = TokocryptoServices.mapCcxtStatusToDb(
+      const tradeStatus = BitgetServices.mapCcxtStatusToDb(
         ccxtOrder.status,
         body.market_type
       );
@@ -245,20 +243,6 @@ export const TokocryptoHandler = {
         status: tradeStatus,
         reduce_only: body.reduce_only,
         is_tpsl: false,
-
-        // Take profit tracking
-        take_profit_enabled: body.take_profit.enabled,
-        take_profit_executed: body.take_profit.enabled && ccxtOrder.status === 'closed',
-        take_profit_price: body.take_profit.enabled ? String(body.take_profit.price) : null,
-        take_profit_price_type: body.take_profit.enabled ? body.take_profit.price_type : null,
-
-        // Stop loss tracking
-        stop_loss_enabled: body.stop_loss.enabled,
-        stop_loss_executed: body.stop_loss.enabled && ccxtOrder.status === 'closed',
-        stop_loss_price: body.stop_loss.enabled ? String(body.stop_loss.price) : null,
-        stop_loss_price_type: body.stop_loss.enabled ? body.stop_loss.price_type : null,
-
-        // Store full CCXT response as metadata
         metadata: JSON.parse(JSONbig.stringify(ccxtOrder)),
       };
 
@@ -270,25 +254,23 @@ export const TokocryptoHandler = {
 
       allReturn.data.newTrade = newTrade;
 
-      // Publish WebSocket control message
-      await redis.publish(
-        "ws-control",
-        JSON.stringify({
-          op: "open",
-          userId: String(exchange_user_id),
-          contract: body.contract,
-        }),
+      // Publish WebSocket control message to Redis Stream
+      await redis.xadd(
+        'ws-control:bitget', '*',
+        'op', 'open',
+        'userId', String(exchange_user_id),
+        'contract', body.contract,
       );
 
       // Clear CCXT credentials
-      TokocryptoServices.clearCredentials();
+      BitgetServices.clearCredentials();
 
       return c.json(allReturn);
     } catch (e) {
-      console.error(e, "ERROR 500 ORDER tokocryptoServices");
+      console.error(e, "ERROR 500 ORDER bitget");
 
       // Clear credentials on error
-      TokocryptoServices.clearCredentials();
+      BitgetServices.clearCredentials();
 
       if (e instanceof Error) {
         return c.json(
@@ -311,14 +293,15 @@ export const TokocryptoHandler = {
 
   cancelOrder: async function (c: Context) {
     try {
-      const body = await c.req.json() as z.infer<typeof tokocryptoCancelOrderSchema>;
+      const body = await c.req.json() as z.infer<typeof bitgetCancelOrderSchema>;
 
-      let { api_key, api_secret, user_id } =
-        await TokocryptoHandler.unwrapCredentials(body.exchange_id);
+      let { api_key, api_secret, api_passphrase, user_id } =
+        await BitgetHandler.unwrapCredentials(body.exchange_id);
 
-      TokocryptoServices.initialize(api_key, api_secret);
+      BitgetServices.initialize(api_key, api_secret, api_passphrase);
       api_key = '';
       api_secret = '';
+      api_passphrase = '';
 
       // Find all trades for autotrader + contract
       const foundTrades = await postgresDb.query.trades.findMany({
@@ -331,7 +314,7 @@ export const TokocryptoHandler = {
       // Cancel all orders using Promise.allSettled
       const results = await Promise.allSettled(
         foundTrades.map(async (trade) => {
-          const resultCancel = await TokocryptoServices.cancelOrder(
+          const resultCancel = await BitgetServices.cancelOrder(
             trade.order_id,
             trade.contract
           );
@@ -348,17 +331,17 @@ export const TokocryptoHandler = {
               .set({ status: 'cancelled' })
               .where(eq(trades.id, result.value.id));
           } else {
-            console.log(`Cancelling status: ${result.status} failed!!!`);
+            console.log(`Canceling status: ${result.status} failed!!!`);
           }
         })
       );
 
-      TokocryptoServices.clearCredentials();
+      BitgetServices.clearCredentials();
 
       return c.json(results);
     } catch (e) {
-      console.error(e, "ERROR 500 CANCEL ORDER tokocryptoServices");
-      TokocryptoServices.clearCredentials();
+      console.error(e, "ERROR 500 CANCEL ORDER bitget");
+      BitgetServices.clearCredentials();
 
       if (e instanceof Error) {
         return c.json(
@@ -381,12 +364,12 @@ export const TokocryptoHandler = {
 
   closePositionDb: async function (c: Context) {
     try {
-      const body = await c.req.json() as z.infer<typeof tokocryptoClosePositionSchema>;
+      const body = await c.req.json() as z.infer<typeof bitgetClosePositionSchema>;
 
-      const { api_key, api_secret, user_id } =
-        await TokocryptoHandler.unwrapCredentials(body.exchange_id);
+      const { api_key, api_secret, api_passphrase, user_id } =
+        await BitgetHandler.unwrapCredentials(body.exchange_id);
 
-      TokocryptoServices.initialize(api_key, api_secret);
+      BitgetServices.initialize(api_key, api_secret, api_passphrase);
 
       // Find all running trades for this contract
       const running_trades = await postgresDb.query.trades.findMany({
@@ -401,15 +384,15 @@ export const TokocryptoHandler = {
       const closed_trades = await Promise.all(
         running_trades.map(async (trade) => {
           // Create reverse order to close position
-          const closePayload: TokocryptoOrder = {
+          const closePayload: BitgetOrder = {
             contract: trade.contract,
-            position_type: trade.position_type === 'long' ? 'short' : 'long', // Opposite direction
+            position_type: trade.position_type === 'long' ? 'short' : 'long',
             market_type: 'market',
             size: Math.abs(parseFloat(trade.size)),
             reduce_only: true,
           };
 
-          const ccxtOrder = await TokocryptoServices.placeOrder(closePayload);
+          const ccxtOrder = await BitgetServices.placeOrder(closePayload);
 
           // Update trade record if close order filled
           if (ccxtOrder.status === 'closed' && ccxtOrder.filled === ccxtOrder.amount) {
@@ -430,7 +413,7 @@ export const TokocryptoHandler = {
         }),
       );
 
-      TokocryptoServices.clearCredentials();
+      BitgetServices.clearCredentials();
 
       return c.json({
         running_trades,
@@ -438,8 +421,8 @@ export const TokocryptoHandler = {
         closed_trades,
       });
     } catch (e) {
-      console.error(e, "ERROR 500 CLOSE POSITION tokocryptoServices");
-      TokocryptoServices.clearCredentials();
+      console.error(e, "ERROR 500 CLOSE POSITION bitget");
+      BitgetServices.clearCredentials();
 
       if (e instanceof Error) {
         return c.json(
@@ -465,23 +448,23 @@ export const TokocryptoHandler = {
       const body = await c.req.json();
       const { exchange_id, method, endpoint, params } = body;
 
-      const { api_key, api_secret } =
-        await TokocryptoHandler.unwrapCredentials(exchange_id);
+      const { api_key, api_secret, api_passphrase } =
+        await BitgetHandler.unwrapCredentials(exchange_id);
 
-      TokocryptoServices.initialize(api_key, api_secret);
+      BitgetServices.initialize(api_key, api_secret, api_passphrase);
 
-      const result = await TokocryptoServices.whitelistedRequest({
+      const result = await BitgetServices.whitelistedRequest({
         method,
         endpoint,
         params,
       });
 
-      TokocryptoServices.clearCredentials();
+      BitgetServices.clearCredentials();
 
       return c.json(result);
     } catch (e) {
-      console.error(e, "ERROR 500 PLAYGROUND tokocryptoServices");
-      TokocryptoServices.clearCredentials();
+      console.error(e, "ERROR 500 PLAYGROUND bitget");
+      BitgetServices.clearCredentials();
 
       if (e instanceof Error) {
         return c.json(

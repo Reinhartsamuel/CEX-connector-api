@@ -4,8 +4,30 @@ import { postgresDb } from '../db/client';
 import { autotraders, exchanges, webhooks, webhook_responses } from '../db/schema';
 import { eq } from 'drizzle-orm';
 import { GateHandler } from './gate/gateHandler';
+import { OkxHandler } from './okx/okxHandler';
+import { HyperliquidHandler } from './hyperliquid/hyperliquidHandler';
+import { TokocryptoHandler } from './tokocrypto/tokocryptoHandler';
 import { getExecutor } from '../executors/registry';
 import type { SignalAction } from '../executors/types';
+
+async function resolveCredentials(exchangeTitle: string, exchangeId: number) {
+  switch (exchangeTitle.toLowerCase()) {
+    case 'gate':
+      return GateHandler.unwrapCredentials(exchangeId);
+    case 'okx': {
+      const c = await OkxHandler.unwrapCredentials(exchangeId);
+      return { api_key: c.api_key, api_secret: c.api_secret, api_passphrase: c.api_passphrase, exchange_user_id: c.exchange_user_id };
+    }
+    case 'hyperliquid': {
+      const c = await HyperliquidHandler.unwrapCredentials(exchangeId);
+      return { api_key: c.wallet_address, api_secret: c.agent_private_key, exchange_user_id: c.exchange_user_id ?? c.wallet_address };
+    }
+    case 'tokocrypto':
+      return TokocryptoHandler.unwrapCredentials(exchangeId);
+    default:
+      throw new Error(`No credential handler for exchange: "${exchangeTitle}"`);
+  }
+}
 
 const tpSlSchema = z.object({
   enabled: z.boolean(),
@@ -20,6 +42,7 @@ const signalSchema = z.object({
   // Optional overrides — if omitted, executor uses autotrader config defaults
   order_type: z.enum(['market', 'limit']).optional(),
   price: z.number().optional(),
+  market_price: z.number().positive().optional(), // current price from TradingView, used for contract sizing on market orders
   take_profit: tpSlSchema.optional(),
   stop_loss: tpSlSchema.optional(),
 }).refine(
@@ -99,10 +122,10 @@ export const SignalHandler = {
         .where(eq(webhooks.id, webhookRow.id));
     };
 
-    // 6. Decrypt credentials via KMS
-    let credentials: Awaited<ReturnType<typeof GateHandler.unwrapCredentials>>;
+    // 6. Decrypt credentials via KMS (dispatched per exchange type)
+    let credentials: Awaited<ReturnType<typeof resolveCredentials>>;
     try {
-      credentials = await GateHandler.unwrapCredentials(autotrader.exchange_id);
+      credentials = await resolveCredentials(exchange.exchange_title, autotrader.exchange_id);
     } catch (err) {
       console.error('[SignalHandler] KMS decrypt failed:', err);
       await markWebhook('failed', 'Failed to load exchange credentials');
@@ -124,11 +147,13 @@ export const SignalHandler = {
       exchange,
       api_key: credentials.api_key,
       api_secret: credentials.api_secret,
+      api_passphrase: (credentials as any).api_passphrase,
       exchange_user_id: credentials.exchange_user_id,
       action: body.action as SignalAction,
       overrides: {
         order_type: body.order_type,
         price: body.price,
+        market_price: body.market_price,
         take_profit: body.take_profit,
         stop_loss: body.stop_loss,
       },

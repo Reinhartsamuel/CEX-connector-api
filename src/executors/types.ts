@@ -14,6 +14,7 @@ export interface TpSlOverride {
 export interface SignalOverrides {
   order_type?: OrderType;   // default: 'market'
   price?: number;           // required when order_type = 'limit'
+  market_price?: number;    // current price sent by TradingView; used for contract sizing on market orders
   take_profit?: TpSlOverride;
   stop_loss?: TpSlOverride;
 }
@@ -24,6 +25,7 @@ export interface ExecutorContext {
   exchange: Exchange;
   api_key: string;
   api_secret: string;
+  api_passphrase?: string; // OKX only
   exchange_user_id: string;
   action: SignalAction;
   overrides: SignalOverrides;

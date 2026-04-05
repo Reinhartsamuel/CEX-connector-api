@@ -11,7 +11,9 @@ import { decryptExchangeCreds } from "../utils/cryptography/decryptExchangeCreds
 const redis = new Redis(process.env.REDIS_URL || "redis://127.0.0.1:6379");
 const control = new Redis(process.env.REDIS_URL || "redis://127.0.0.1:6379");
 
-const CTRL_CHANNEL = "ws-control";
+const STREAM_KEY = "ws-control:okx";
+const GROUP_NAME = "okx-workers";
+const CONSUMER_NAME = `okx-worker-${process.pid}`;
 const OKX_BASE_URL = "https://www.okx.com";
 
 // Each user has exactly one WS connection.
@@ -23,32 +25,81 @@ interface OkxConnection {
 }
 const connections = new Map<string, OkxConnection>();
 
-// ---- Subscribe to control channel ---- //
-(async () => {
-  console.log("OKX WS Worker: Listening for control commands...");
-  await control.subscribe(CTRL_CHANNEL);
+// ---- Redis Streams consumer for ws-control:okx ---- //
+async function startStreamConsumer() {
+  try {
+    await control.xgroup("CREATE", STREAM_KEY, GROUP_NAME, "$", "MKSTREAM");
+    console.log(`[OKX WS] Created consumer group '${GROUP_NAME}' on stream '${STREAM_KEY}'`);
+  } catch (err: any) {
+    if (!err.message?.includes("BUSYGROUP")) throw err;
+  }
 
-  control.on("message", (chan, msg) => {
-    if (chan !== CTRL_CHANNEL) return;
-
-    try {
-      const cmd = JSON.parse(msg);
-
-      // Only handle OKX commands (exchange field distinguishes from Gate/Hyperliquid)
-      if (cmd.exchange !== "okx") return;
-
-      if (cmd.op === "open" && cmd.userId) {
-        ensureConnection(cmd.userId);
+  try {
+    const claimed = await (control as any).xautoclaim(
+      STREAM_KEY, GROUP_NAME, CONSUMER_NAME,
+      30_000, "0-0", "COUNT", "100",
+    );
+    const messages = Array.isArray(claimed) ? (claimed[1] ?? []) : [];
+    if (messages.length > 0) {
+      console.log(`[OKX WS] Reclaimed ${messages.length} pending message(s) on startup`);
+      for (const [id, fields] of messages) {
+        await handleStreamMessage(id, fields);
       }
+    }
+  } catch (err) {
+    console.error("[OKX WS] XAUTOCLAIM failed on startup:", err);
+  }
 
-      if (cmd.op === "close" && cmd.userId) {
-        closeConnection(cmd.userId);
+  console.log("[OKX WS] Listening for control commands via Redis Streams...");
+  while (true) {
+    try {
+      const results = await control.xreadgroup(
+        "GROUP", GROUP_NAME, CONSUMER_NAME,
+        "COUNT", "10",
+        "BLOCK", "5000",
+        "STREAMS", STREAM_KEY, ">",
+      ) as any;
+
+      if (!results) continue;
+
+      for (const [, messages] of results) {
+        for (const [id, fields] of messages) {
+          await handleStreamMessage(id, fields);
+        }
       }
     } catch (err) {
-      console.error("OKX WS Worker: invalid control command:", msg, err);
+      console.error("[OKX WS] Stream read error:", err);
+      await new Promise((r) => setTimeout(r, 1000));
     }
-  });
-})();
+  }
+}
+
+function parseStreamFields(fields: string[]): Record<string, string> {
+  const obj: Record<string, string> = {};
+  for (let i = 0; i < fields.length; i += 2) obj[fields[i]] = fields[i + 1];
+  return obj;
+}
+
+async function handleStreamMessage(id: string, fields: string[]) {
+  try {
+    const cmd = parseStreamFields(fields);
+
+    if (cmd.op === "open" && cmd.userId) {
+      ensureConnection(cmd.userId);
+    } else if (cmd.op === "close" && cmd.userId) {
+      closeConnection(cmd.userId);
+    }
+
+    await control.xack(STREAM_KEY, GROUP_NAME, id);
+  } catch (err) {
+    console.error("[OKX WS] Error handling stream message:", id, err);
+  }
+}
+
+startStreamConsumer().catch((err) => {
+  console.error("[OKX WS] Stream consumer fatal error:", err);
+  process.exit(1);
+});
 
 // ---- Restore connections for users with active trades on startup ---- //
 async function restoreConnections() {

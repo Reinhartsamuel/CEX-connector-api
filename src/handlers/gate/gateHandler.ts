@@ -25,9 +25,8 @@ import redis from "../../db/redis";
 import {
   decrypt,
   generateAndEncryptCredentials,
-  kmsClient,
+  getOrDecryptDEK,
 } from "../../utils/cryptography/kmsUtils";
-import { DecryptCommand } from "@aws-sdk/client-kms";
 
 export const GateHandler = {
   /**
@@ -54,28 +53,11 @@ export const GateHandler = {
     });
     if (!exchange) throw new Error("exchange not found");
 
-    // ========= use Vault/KMS to encrypt and decrypt the credentials ======
-    const dekResp = await kmsClient.send(
-      new DecryptCommand({
-        CiphertextBlob: exchange.enc_dek!,
-        EncryptionAlgorithm: "SYMMETRIC_DEFAULT",
-      }),
-    );
-    if (!dekResp.Plaintext) throw new Error("KMS decrypt failed");
+    // DEK is served from in-memory cache after first decrypt — no KMS call on cache hit
+    const dek = await getOrDecryptDEK(exchange.id, exchange.enc_dek!);
 
-    const plaintextDEK = Buffer.from(dekResp.Plaintext);
-
-    const decryptedApiKey = decrypt(
-      JSON.parse(exchange.api_key_encrypted),
-      plaintextDEK,
-    );
-    const decryptedApiSecret = decrypt(
-      JSON.parse(exchange.api_secret_encrypted),
-      plaintextDEK,
-    );
-
-    // zero
-    plaintextDEK.fill(0);
+    const decryptedApiKey = decrypt(JSON.parse(exchange.api_key_encrypted), dek);
+    const decryptedApiSecret = decrypt(JSON.parse(exchange.api_secret_encrypted), dek);
 
     return {
       api_key: decryptedApiKey,
@@ -143,25 +125,6 @@ export const GateHandler = {
       // Serialize AES payloads for DB
       const apiKeyCiphertext = JSON.stringify(encryptedApiKey);
       const apiSecretCiphertext = JSON.stringify(encryptedApiSecret);
-
-      // TODO: DELETE BEFORE PUSHING
-      const dekResp = await kmsClient.send(
-        new DecryptCommand({
-          CiphertextBlob: encryptedDEK,
-          EncryptionAlgorithm: "SYMMETRIC_DEFAULT",
-        }),
-      );
-      if (!dekResp.Plaintext) throw new Error("KMS decrypt failed");
-
-      const plaintextDEK = Buffer.from(dekResp.Plaintext);
-
-      const decryptedApiKey = decrypt(
-        JSON.parse(apiKeyCiphertext),
-        plaintextDEK,
-      );
-
-      // zero
-      plaintextDEK.fill(0);
 
       // ---- ZERO plaintext ASAP ----
       api_key = undefined;
@@ -796,7 +759,6 @@ export const GateHandler = {
       const { api_key, api_secret, user_id } =
         await GateHandler.unwrapCredentials(body.exchange_id);
       GateServices.initialize(api_key, api_secret);
-      GateServices.initialize(api_key, api_secret);
 
       // find on trades table where exchange id and contract and status === 'waiting_targets'
 
@@ -834,7 +796,8 @@ export const GateHandler = {
               pnl: res.pnl,
               pnl_margin: res.pnl_margin,
               closed_at: new Date(),
-            });
+            })
+            .where(eq(trades.id, trade.id));
           }
           return res;
         }),

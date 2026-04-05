@@ -57,6 +57,7 @@ export const exchanges = pgTable('exchanges', {
 }, (table) => {
   return {
     // unique_user_exchange: unique().on(table.user_id, table.exchange_title),
+    unique_user_exchange_id: unique().on(table.exchange_user_id),
   };
 });
 
@@ -78,8 +79,10 @@ export const autotraders = pgTable('autotraders', {
   leverage:integer('leverage').notNull(),
   leverage_type: text('leverage_type'),
   autocompound:boolean('autocompound').default(false),
+  
   current_balance: decimal('current_balance', { precision: 10, scale: 2 }).notNull(),
   webhook_token: text('webhook_token').unique(), // unique token for webhook authentication (TradingView alerts)
+  contract_value_multiplier : numeric('contract_value_multiplier', { precision: 20, scale: 8 })
 }, (table) => {
   return {
     unique_user_exchange_plan_symbol: unique().on(table.user_id, table.exchange_id, table.trading_plan_id, table.symbol),

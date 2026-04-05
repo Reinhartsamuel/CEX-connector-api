@@ -316,6 +316,7 @@ userRouter.get('/accounts',
    async (c) => {
     const payload = c.get('jwtPayload');
     const user_id = payload.sub;
+    console.log(user_id,'user Id')
 
   // 1. Find the literal last time a snapshot was recorded for this user
   const latestEntry = await postgresDb

@@ -11,6 +11,48 @@ const KMS_KEY_ID = process.env.KMS_KEY_ID!;
 const REGION = process.env.AWS_REGION!;
 const ALGO = "aes-256-gcm";
 const IV_LENGTH = 12;
+const DEK_CACHE_TTL_MS = 5 * 60 * 1000; // 5 minutes
+
+// ---------- IN-MEMORY DEK CACHE ----------
+// Stores plaintext DEKs in process memory only — never Redis, never disk.
+// Eliminates one KMS round-trip per trade for the same exchange within the TTL window.
+// Threat model: if the process is compromised, the DEK is exposed for up to TTL.
+// Mitigations: short TTL, zeroing on eviction, no persistence.
+interface CachedDEK {
+  dek: Buffer;
+  expiresAt: number;
+}
+const dekCache = new Map<number, CachedDEK>();
+
+/**
+ * Returns the plaintext DEK for the given exchange, decrypting via KMS only on
+ * cache miss or TTL expiry. The returned Buffer is owned by the cache — callers
+ * must NOT call .fill(0) on it.
+ */
+export async function getOrDecryptDEK(exchangeId: number, encDEK: Uint8Array): Promise<Buffer> {
+  const cached = dekCache.get(exchangeId);
+  if (cached && cached.expiresAt > Date.now()) {
+    return cached.dek;
+  }
+
+  // Zero and evict the stale entry before fetching a fresh one
+  if (cached) {
+    cached.dek.fill(0);
+    dekCache.delete(exchangeId);
+  }
+
+  const dekResp = await kmsClient.send(
+    new DecryptCommand({
+      CiphertextBlob: encDEK,
+      EncryptionAlgorithm: "SYMMETRIC_DEFAULT",
+    }),
+  );
+  if (!dekResp.Plaintext) throw new Error("KMS decrypt failed");
+
+  const dek = Buffer.from(dekResp.Plaintext);
+  dekCache.set(exchangeId, { dek, expiresAt: Date.now() + DEK_CACHE_TTL_MS });
+  return dek;
+}
 
 export const kmsClient = new KMSClient({
   region: process.env.AWS_REGION!,

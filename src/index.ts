@@ -12,10 +12,14 @@ import tradingPlanRouter from './routes/tradingPlanRoutes'
 import hyperliquidRouter from './routes/hyperliquidRoutes'
 import tokocryptoRouter from './routes/tokocryptoRoutes'
 import webhookRouter from './routes/webhookRoutes'
+import bitgetRouter from './routes/bitgetRoutes'
+import mexcRouter from './routes/mexcRoutes'
+import bitmartRouter from './routes/bitmartRoutes'
 
 const app = new Hono()
 const allowedOrigins = [
   'http://localhost:5173',
+  'http://localhost:5174',
   process.env.CORS_ORIGIN,
 ]
 
@@ -44,7 +48,9 @@ app.route('/gate', gateRouter)
 app.route('/okx', okxRouter)
 app.route('/hyperliquid', hyperliquidRouter)
 app.route('/tokocrypto', tokocryptoRouter)
-
+app.route('/bitget', bitgetRouter)
+app.route('/mexc', mexcRouter)
+app.route('/bitmart', bitmartRouter)
 
 
 app.route('/webhook', webhookRouter)

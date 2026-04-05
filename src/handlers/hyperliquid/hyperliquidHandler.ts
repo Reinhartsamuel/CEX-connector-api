@@ -9,9 +9,8 @@ import * as z from "zod";
 import {
   decrypt,
   generateAndEncryptCredentials,
-  kmsClient,
+  getOrDecryptDEK,
 } from "../../utils/cryptography/kmsUtils";
-import { DecryptCommand } from "@aws-sdk/client-kms";
 import { gatePlaceFuturesOrdersSchema } from "../../schemas/gateSchemas";
 import { redis } from "../../db/redis";
 
@@ -28,28 +27,10 @@ export const HyperliquidHandler = {
     });
     if (!exchange) throw new Error("Exchange record not found");
 
-    const dekResp = await kmsClient.send(
-      new DecryptCommand({
-        CiphertextBlob: exchange.enc_dek!,
-        EncryptionAlgorithm: "SYMMETRIC_DEFAULT",
-      }),
-    );
-    if (!dekResp.Plaintext) throw new Error("KMS DEK decryption failed");
+    const dek = await getOrDecryptDEK(exchange.id, exchange.enc_dek!);
 
-    const plaintextDEK = Buffer.from(dekResp.Plaintext);
-
-    const decryptedWalletAddress = decrypt(
-      JSON.parse(exchange.api_key_encrypted),
-      plaintextDEK,
-    ).toLowerCase(); // Ensure lowercase for Hyperliquid compatibility
-
-    const decryptedAgentPrivateKey = decrypt(
-      JSON.parse(exchange.api_secret_encrypted),
-      plaintextDEK,
-    );
-
-    // Zero out sensitive DEK buffer
-    plaintextDEK.fill(0);
+    const decryptedWalletAddress = decrypt(JSON.parse(exchange.api_key_encrypted), dek).toLowerCase();
+    const decryptedAgentPrivateKey = decrypt(JSON.parse(exchange.api_secret_encrypted), dek);
 
     return {
       wallet_address: decryptedWalletAddress,

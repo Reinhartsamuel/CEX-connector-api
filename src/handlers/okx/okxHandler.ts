@@ -27,9 +27,8 @@ import { OkxServices } from "../../services/okxServices";
 import {
   decrypt,
   generateAndEncryptCredentials,
-  kmsClient,
+  getOrDecryptDEK,
 } from "../../utils/cryptography/kmsUtils";
-import { DecryptCommand } from "@aws-sdk/client-kms";
 import { okxCancelOrderSchema, okxRegisterUserSchema } from "../../schemas/okxSchemas";
 
 export const OkxHandler = {
@@ -58,31 +57,11 @@ export const OkxHandler = {
     });
     if (!exchange) throw new Error("exchange not found");
 
-    const dekResp = await kmsClient.send(
-      new DecryptCommand({
-        CiphertextBlob: exchange.enc_dek!,
-        EncryptionAlgorithm: "SYMMETRIC_DEFAULT",
-      }),
-    );
-    if (!dekResp.Plaintext) throw new Error("KMS decrypt failed");
+    const dek = await getOrDecryptDEK(exchange.id, exchange.enc_dek!);
 
-    const plaintextDEK = Buffer.from(dekResp.Plaintext);
-
-    const decryptedApiKey = decrypt(
-      JSON.parse(exchange.api_key_encrypted),
-      plaintextDEK,
-    );
-    const decryptedApiSecret = decrypt(
-      JSON.parse(exchange.api_secret_encrypted),
-      plaintextDEK,
-    );
-    const decryptedApiPassphrase = decrypt(
-      JSON.parse(exchange.api_passphrase_encrypted!),
-      plaintextDEK,
-    );
-
-    // zero
-    plaintextDEK.fill(0);
+    const decryptedApiKey = decrypt(JSON.parse(exchange.api_key_encrypted), dek);
+    const decryptedApiSecret = decrypt(JSON.parse(exchange.api_secret_encrypted), dek);
+    const decryptedApiPassphrase = decrypt(JSON.parse(exchange.api_passphrase_encrypted!), dek);
 
     return {
       api_key: decryptedApiKey,
