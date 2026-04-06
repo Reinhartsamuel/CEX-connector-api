@@ -41,8 +41,8 @@ const signalSchema = z.object({
 
   // Optional overrides — if omitted, executor uses autotrader config defaults
   order_type: z.enum(['market', 'limit']).optional(),
-  price: z.number().optional(),
-  market_price: z.number().positive().optional(), // current price from TradingView, used for contract sizing on market orders
+  price: z.coerce.number().optional(),
+  market_price: z.coerce.number().positive().optional(), // current price from TradingView, used for contract sizing on market orders
   take_profit: tpSlSchema.optional(),
   stop_loss: tpSlSchema.optional(),
 }).refine(
