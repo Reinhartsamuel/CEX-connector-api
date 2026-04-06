@@ -169,6 +169,7 @@ async function startApp() {
     hostname: "0.0.0.0",
     port,
     fetch: app.fetch,
+    idleTimeout: 0, // disable idle timeout — SSE connections are long-lived
   });
 }
 

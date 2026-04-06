@@ -27,7 +27,7 @@ userRouter.get('/sse/orders/:userId', async (c) => {
       c.req.raw.signal.addEventListener('abort', async () => {
         await sub.unsubscribe(`user:${userId}:orders:chan`);
         sub.disconnect();
-        controller.close();
+        try { controller.close(); } catch { /* already closed */ }
       }, { once: true });
     }
   }), 200, { 'Content-Type': 'text/event-stream' });
@@ -838,7 +838,7 @@ userRouter.get('/sse/trades',
           clearInterval(heartbeat);
           await sub.unsubscribe(`user:${user_id}:orders:chan`);
           sub.disconnect();
-          controller.close();
+          try { controller.close(); } catch { /* already closed */ }
         }, { once: true });
       },
     });
@@ -907,7 +907,7 @@ userRouter.get('/sse/autotraders/:id/trades',
           clearInterval(heartbeat);
           await sub.unsubscribe(`user:${user_id}:orders:chan`);
           sub.disconnect();
-          controller.close();
+          try { controller.close(); } catch { /* already closed */ }
         }, { once: true });
       },
     });
