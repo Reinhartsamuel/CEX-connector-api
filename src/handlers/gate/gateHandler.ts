@@ -23,13 +23,13 @@ import { and, eq } from "drizzle-orm";
 import * as JSONbig from "json-bigint";
 import redis from "../../db/redis";
 import {
-import { createLogger } from '../../utils/logger';
-
-const log = createLogger({ exchange: 'gate', process: 'handler' });
   decrypt,
   generateAndEncryptCredentials,
   getOrDecryptDEK,
 } from "../../utils/cryptography/kmsUtils";
+import { createLogger } from '../../utils/logger';
+
+const log = createLogger({ exchange: 'gate', process: 'handler' });
 
 export const GateHandler = {
   /**

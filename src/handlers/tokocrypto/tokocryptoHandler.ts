@@ -15,14 +15,14 @@ import {
   getOrDecryptDEK,
 } from "../../utils/cryptography/kmsUtils";
 import {
-import { createLogger } from '../../utils/logger';
-
-const log = createLogger({ exchange: 'tokocrypto', process: 'handler' });
   tokocryptoRegisterUserSchema,
   tokocryptoPlaceOrderSchema,
   tokocryptoCancelOrderSchema,
   tokocryptoClosePositionSchema,
 } from "../../schemas/tokocryptoSchemas";
+import { createLogger } from '../../utils/logger';
+
+const log = createLogger({ exchange: 'tokocrypto', process: 'handler' });
 
 export const TokocryptoHandler = {
   /**

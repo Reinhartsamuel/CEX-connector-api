@@ -3,9 +3,6 @@ import { postgresDb } from "../db/client";
 import { trading_plans, trading_plan_pairs, users } from "../db/schema";
 import { and, eq, desc, asc, inArray, sql } from "drizzle-orm";
 import {
-import { createLogger } from '../../utils/logger';
-
-const log = createLogger({ exchange: 'api', process: 'trading-plan-handler' });
   createTradingPlanSchema,
   updateTradingPlanSchema,
   queryTradingPlanSchema,
@@ -19,6 +16,9 @@ const log = createLogger({ exchange: 'api', process: 'trading-plan-handler' });
   queryTradingPlanPairSchema,
   batchTradingPlanPairSchema,
 } from "../schemas/tradingPlanSchemas";
+import { createLogger } from '../utils/logger';
+
+const log = createLogger({ exchange: 'api', process: 'trading-plan-handler' });
 
 export const TradingPlanHandler = {
   // ========== TRADING PLANS CRUD ==========

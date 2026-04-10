@@ -3,9 +3,6 @@ import { postgresDb } from "../db/client";
 import { autotraders, exchanges, users, trading_plans } from "../db/schema";
 import { and, eq, desc, asc, like, inArray, sql } from "drizzle-orm";
 import {
-import { createLogger } from '../../utils/logger';
-
-const log = createLogger({ exchange: 'api', process: 'autotrader-handler' });
   createAutotraderSchema,
   updateAutotraderSchema,
   queryAutotraderSchema,
@@ -19,6 +16,9 @@ const log = createLogger({ exchange: 'api', process: 'autotrader-handler' });
   UpdateAutotraderBalanceInput,
   BatchAutotraderInput,
 } from "../schemas/autotraderSchemas";
+import { createLogger } from '../utils/logger';
+
+const log = createLogger({ exchange: 'api', process: 'autotrader-handler' });
 
 export const AutotraderHandler = {
   // Create a new autotrader

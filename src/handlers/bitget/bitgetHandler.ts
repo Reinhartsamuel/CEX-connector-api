@@ -14,14 +14,14 @@ import {
   getOrDecryptDEK,
 } from "../../utils/cryptography/kmsUtils";
 import {
-import { createLogger } from '../../utils/logger';
-
-const log = createLogger({ exchange: 'bitget', process: 'handler' });
   bitgetRegisterUserSchema,
   bitgetPlaceOrderSchema,
   bitgetCancelOrderSchema,
   bitgetClosePositionSchema,
 } from "../../schemas/bitgetSchemas";
+import { createLogger } from '../../utils/logger';
+
+const log = createLogger({ exchange: 'bitget', process: 'handler' });
 
 export const BitgetHandler = {
   /**

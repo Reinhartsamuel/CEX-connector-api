@@ -14,14 +14,14 @@ import {
   getOrDecryptDEK,
 } from "../../utils/cryptography/kmsUtils";
 import {
-import { createLogger } from '../../utils/logger';
-
-const log = createLogger({ exchange: 'mexc', process: 'handler' });
   mexcRegisterUserSchema,
   mexcPlaceOrderSchema,
   mexcCancelOrderSchema,
   mexcClosePositionSchema,
 } from "../../schemas/mexcSchemas";
+import { createLogger } from '../../utils/logger';
+
+const log = createLogger({ exchange: 'mexc', process: 'handler' });
 
 export const MexcHandler = {
   /**
