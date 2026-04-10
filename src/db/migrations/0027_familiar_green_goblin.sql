@@ -1,0 +1,1 @@
+ALTER TABLE "autotraders" ADD COLUMN "contract_value_multiplier" numeric(20, 8);

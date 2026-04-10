@@ -2,6 +2,9 @@ import { ExchangeClient, InfoClient, HttpTransport } from "@nktkas/hyperliquid";
 import { privateKeyToAccount } from "viem/accounts";
 import type { PrivateKeyAccount } from "viem";
 import { HyperliquidOrder } from "../schemas/interfaces";
+import { createLogger } from '../utils/logger';
+
+const log = createLogger({ exchange: 'hyperliquid', process: 'service' });
 
 const BASE_URL = "https://api.hyperliquid.xyz";
 
@@ -197,7 +200,7 @@ export const HyperliquidServices = {
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify(body),
         });
-        console.log(response, "response");
+        log.debug({ data: response }, 'response');
 
         if (!response.ok) {
           return {

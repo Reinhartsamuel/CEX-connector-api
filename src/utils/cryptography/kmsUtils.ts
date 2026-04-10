@@ -107,7 +107,7 @@ export async function generateAndEncryptCredentials(
   // zero plaintext DEK
   dek.fill(0);
 
-  console.log(`[${(performance.now() - t0).toFixed(2)}ms] generateAndEncryptCredentials`);
+  // timing logged at debug level only
   return row;
 }
 

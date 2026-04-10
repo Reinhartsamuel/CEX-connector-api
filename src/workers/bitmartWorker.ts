@@ -7,6 +7,10 @@ import { exchanges, Trade, trades } from "../db/schema";
 import { and, eq, inArray } from "drizzle-orm";
 import crypto from "crypto";
 import { decryptExchangeCreds } from "../utils/cryptography/decryptExchangeCreds";
+import { createLogger, flushLogger } from "../utils/logger";
+import { wsConnectionsActive, tradesClosedTotal, exchangeErrorsTotal } from "../utils/metrics";
+
+const log = createLogger({ exchange: "bitmart", process: "worker" });
 
 // ---- Redis Setup ---- //
 const redis = new Redis(process.env.REDIS_URL || "redis://127.0.0.1:6379");
@@ -29,7 +33,7 @@ const connections = new Map<string, UserConnection>();
 async function startStreamConsumer() {
   try {
     await control.xgroup("CREATE", STREAM_KEY, GROUP_NAME, "$", "MKSTREAM");
-    console.log(`[BitMart WS] Created consumer group '${GROUP_NAME}' on stream '${STREAM_KEY}'`);
+    log.info({ group: GROUP_NAME, stream: STREAM_KEY }, 'Created consumer group');
   } catch (err: any) {
     if (!err.message?.includes("BUSYGROUP")) throw err;
   }
@@ -41,16 +45,16 @@ async function startStreamConsumer() {
     );
     const messages = Array.isArray(claimed) ? (claimed[1] ?? []) : [];
     if (messages.length > 0) {
-      console.log(`[BitMart WS] Reclaimed ${messages.length} pending message(s) on startup`);
+      log.info({ count: messages.length }, 'Reclaimed pending messages on startup');
       for (const [id, fields] of messages) {
         await handleStreamMessage(id, fields);
       }
     }
   } catch (err) {
-    console.error("[BitMart WS] XAUTOCLAIM failed on startup:", err);
+    log.error({ err }, 'XAUTOCLAIM failed on startup');
   }
 
-  console.log("[BitMart WS] Listening for control commands via Redis Streams...");
+  log.info('Listening for control commands via Redis Streams');
   while (true) {
     try {
       const results = await control.xreadgroup(
@@ -68,7 +72,7 @@ async function startStreamConsumer() {
         }
       }
     } catch (err) {
-      console.error("[BitMart WS] Stream read error:", err);
+      log.error({ err }, 'Stream read error');
       await new Promise((r) => setTimeout(r, 1000));
     }
   }
@@ -95,18 +99,18 @@ async function handleStreamMessage(id: string, fields: string[]) {
 
     await control.xack(STREAM_KEY, GROUP_NAME, id);
   } catch (err) {
-    console.error("[BitMart WS] Error handling stream message:", id, err);
+    log.error({ err, messageId: id }, 'Error handling stream message');
   }
 }
 
 startStreamConsumer().catch((err) => {
-  console.error("[BitMart WS] Stream consumer fatal error:", err);
+  log.fatal({ err }, 'Stream consumer fatal error');
   process.exit(1);
 });
 
 // ---- Restore connections for users with active trades on startup ---- //
 async function restoreConnections() {
-  console.log("[BitMart WS] Restoring connections for users with active trades...");
+  log.info('Restoring connections for users with active trades');
 
   try {
     const activeTrades = await postgresDb
@@ -120,13 +124,13 @@ async function restoreConnections() {
         ),
       );
 
-    console.log(`[BitMart WS] Found ${activeTrades.length} users with active trades to reconnect`);
+    log.info({ count: activeTrades.length }, 'Found users with active trades to reconnect');
 
     for (const { exchange_user_id } of activeTrades) {
       ensureConnection(exchange_user_id);
     }
   } catch (err) {
-    console.error("[BitMart WS] Failed to restore connections on startup:", err);
+    log.error({ err }, 'Failed to restore connections on startup');
   }
 }
 
@@ -150,17 +154,17 @@ async function ensureConnection(
   let existing = connections.get(userId);
 
   if (existing?.ws && existing.ws.readyState === WebSocket.OPEN) {
-    console.log(`WS Worker: connection already open for user ${userId}`);
+    log.debug({ userId }, 'Connection already open');
     return;
   }
 
   const creds = await fetchCreds(userId);
   if (!creds) {
-    console.warn(`WS Worker: No credentials found for user ${userId}`);
+    log.warn({ userId }, 'No credentials found');
     return;
   }
 
-  console.log(`WS Worker: Opening TS for user ${userId}`);
+  log.info({ userId }, 'Opening WebSocket connection');
 
   // BitMart WebSocket endpoint
   const wsUrl = "wss://openapi-ws-v2.bitmart.com";
@@ -177,7 +181,7 @@ async function ensureConnection(
   ws.on("message", (raw: Buffer) => onWsMessage(userId, raw, ws));
   ws.on("close", (code, reason) => onWsClose(userId, code, reason));
   ws.on("error", (err) =>
-    console.error(`WS Worker: WS error (${userId})`, err),
+    log.error({ err, userId }, 'WebSocket error'),
   );
 }
 
@@ -185,7 +189,7 @@ function closeConnection(userId: string) {
   const state = connections.get(userId);
   if (!state) return;
 
-  console.log(`WS Worker: Closing connection for user ${userId}`);
+  log.info({ userId }, 'Closing WebSocket connection');
 
   if (state.pingInterval) clearInterval(state.pingInterval);
   if (state.ws) state.ws.terminate();
@@ -201,7 +205,7 @@ function onWsOpen(
   ws: WebSocket,
   creds: { apiKey: string; apiSecret: string; memo: string },
 ) {
-  console.log(`WS Worker: WS OPEN for user ${userId}`);
+  log.info({ userId }, 'WebSocket open');
 
   const state = connections.get(userId);
   if (!state) return;
@@ -228,14 +232,14 @@ async function onWsMessage(userId: string, raw: Buffer, ws: WebSocket) {
   try {
     msg = JSONbig.parse(raw.toString());
   } catch (err) {
-    console.error("WS Worker: failed to parse WS message", err);
+    log.error({ err }, 'Failed to parse WS message');
     return;
   }
 
   // Handle login response
   if (msg.action === "access") {
     if (msg.success === true) {
-      console.log(`✅ Login successful for user=${userId}`);
+      log.info({ userId }, 'Login successful');
       
       // Subscribe to futures order channel
       ws.send(JSON.stringify({
@@ -249,16 +253,16 @@ async function onWsMessage(userId: string, raw: Buffer, ws: WebSocket) {
         args: ["futures/position"],
       }));
       
-      console.log(`📡 SUBSCRIBED to orders and positions for user=${userId}`);
+      log.info({ userId }, 'Subscribed to channels');
     } else {
-      console.error(`❌ Login failed for user=${userId}:`, msg);
+      log.error({ userId, msg }, 'Login failed');
     }
     return;
   }
 
   // Handle subscription confirmation
   if (msg.action === "subscribe" && msg.success === true) {
-    console.log(`✅ Subscription confirmed for user=${userId}`, msg.args);
+    log.debug({ userId }, 'Subscription confirmed');
     return;
   }
 
@@ -276,15 +280,13 @@ async function onWsMessage(userId: string, raw: Buffer, ws: WebSocket) {
 
   // Handle pong
   if (msg.action === "pong") {
-    console.log(`🏓 PONG ← user=${userId}`);
+    log.debug({ userId }, 'Pong received');
     return;
   }
 }
 
 function onWsClose(userId: string, code: number, reason: Buffer) {
-  console.warn(
-    `WS Worker: WS CLOSED user=${userId} code=${code} reason=${reason.toString()}`,
-  );
+  log.warn({ userId, code, reason: reason.toString() }, 'WebSocket closed');
 
   const state = connections.get(userId);
   if (!state) return;
@@ -297,7 +299,7 @@ function onWsClose(userId: string, code: number, reason: Buffer) {
   const delay = state.backoff;
   state.backoff = Math.min(state.backoff * 1.5, 60_000);
 
-  console.log(`WS Worker: Reconnecting user ${userId} in ${delay}ms...`);
+  log.info({ userId, delay }, 'Scheduling reconnect');
 
   setTimeout(() => ensureConnection(userId), delay);
 }
@@ -311,7 +313,7 @@ async function handleOrderUpdate(userId: string, data: any) {
   
   for (const order of orders) {
     const event = classifyOrderEvent(order);
-    console.log(`📥 ORDER UPDATE (${userId}): event=${event}`, order);
+    log.debug({ userId }, 'Order update');
 
     let tradeData: Trade | null = null;
     if (order?.order_id) {
@@ -322,7 +324,7 @@ async function handleOrderUpdate(userId: string, data: any) {
           .where(eq(trades.trade_id, String(order.order_id)));
         tradeData = row;
       } catch (e) {
-        console.error(e, "error query");
+        log.error({ err: e }, 'Error querying trade');
       }
     }
 
@@ -370,7 +372,7 @@ async function handleOrderUpdate(userId: string, data: any) {
         break;
 
       default:
-        console.log("Order event not handled:", order);
+        log.debug({}, 'Order event not handled');
     }
 
     await redis.publish(`user:${userId}:orders:chan`, JSON.stringify(order));
@@ -390,11 +392,11 @@ async function handlePositionUpdate(userId: string, data: any) {
     const size = parseFloat(position.position_size || "0");
     const positionKey = `${symbol}:${posSide}`;
 
-    console.log(`📥 POSITION UPDATE (${userId}): ${positionKey}, size=${size}`);
+    log.debug({ userId }, 'Position update');
 
     if (size === 0) {
       // Position closed
-      console.log(`Position closed: ${positionKey}`);
+      log.info({ positionKey }, 'Position closed');
 
       const exchange = await postgresDb.query.exchanges.findFirst({
         columns: { id: true },
@@ -471,7 +473,7 @@ function classifyOrderEvent(order: any): OrderEvent {
 // ------------------------------------------- //
 
 process.on("SIGINT", () => {
-  console.log("WS Worker: shutting down...");
+  log.info('Shutting down');
 
   for (const [userId, st] of connections.entries()) {
     if (st.ws) st.ws.terminate();
@@ -479,4 +481,4 @@ process.on("SIGINT", () => {
   process.exit(0);
 });
 
-console.log("✅ BitMart WebSocket Worker started");
+log.info('Worker started successfully');

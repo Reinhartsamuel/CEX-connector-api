@@ -1,0 +1,74 @@
+version: "3.8"
+
+services:
+  loki:
+    image: grafana/loki:3.0.0
+    container_name: loki
+    ports:
+      - "3100:3100"
+    volumes:
+      - ./loki-config.yaml:/etc/loki/local-config.yaml:ro
+      - loki-data:/loki
+    command: -config.file=/etc/loki/local-config.yaml
+    restart: unless-stopped
+
+  mimir:
+    image: grafana/mimir:2.13.0
+    container_name: mimir
+    ports:
+      - "9009:9009"
+    volumes:
+      - ./mimir-config.yaml:/etc/mimir/mimir.yaml:ro
+      - mimir-data:/data
+    command: -config.file=/etc/mimir/mimir.yaml
+    restart: unless-stopped
+
+  tempo:
+    image: grafana/tempo:2.5.0
+    container_name: tempo
+    ports:
+      - "3200:3200"
+      - "4317:4317"   # OTLP gRPC
+      - "4318:4318"   # OTLP HTTP
+    volumes:
+      - ./tempo-config.yaml:/etc/tempo/tempo.yaml:ro
+      - tempo-data:/var/tempo
+    command: -config.file=/etc/tempo/tempo.yaml
+    restart: unless-stopped
+
+  grafana:
+    image: grafana/grafana:11.0.0
+    container_name: grafana
+    ports:
+      - "3000:3000"
+    volumes:
+      - grafana-data:/var/lib/grafana
+      - ./grafana-datasources.yaml:/etc/grafana/provisioning/datasources/datasources.yaml:ro
+    environment:
+      - GF_AUTH_ANONYMOUS_ENABLED=true
+      - GF_AUTH_ANONYMOUS_ORG_ROLE=Admin
+      - GF_AUTH_DISABLE_LOGIN_FORM=false
+    restart: unless-stopped
+    depends_on:
+      - loki
+      - mimir
+      - tempo
+
+  alloy:
+    image: grafana/alloy:1.2.0
+    container_name: alloy
+    ports:
+      - "12345:12345"
+    volumes:
+      - ./alloy-config.river:/etc/alloy/config.river:ro
+    command: run /etc/alloy/config.river
+    restart: unless-stopped
+    depends_on:
+      - mimir
+      - tempo
+
+volumes:
+  loki-data:
+  mimir-data:
+  tempo-data:
+  grafana-data:

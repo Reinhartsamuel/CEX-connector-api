@@ -6,6 +6,10 @@ import { postgresDb } from "../db/client";
 import { exchanges, Trade, trades } from "../db/schema";
 import { and, desc, eq, inArray } from "drizzle-orm";
 import crypto from "crypto";
+import { createLogger, flushLogger } from "../utils/logger";
+import { wsConnectionsActive, tradesClosedTotal, exchangeErrorsTotal } from "../utils/metrics";
+
+const log = createLogger({ exchange: "tokocrypto", process: "worker" });
 
 // ---- Redis Setup ---- //
 const redis = new Redis(process.env.REDIS_URL || "redis://127.0.0.1:6379");
@@ -28,7 +32,7 @@ const connections = new Map<string, UserConnection>();
 async function startStreamConsumer() {
   try {
     await control.xgroup("CREATE", STREAM_KEY, GROUP_NAME, "$", "MKSTREAM");
-    console.log(`[Tokocrypto WS] Created consumer group '${GROUP_NAME}' on stream '${STREAM_KEY}'`);
+    log.info({ group: GROUP_NAME, stream: STREAM_KEY }, 'Created consumer group');
   } catch (err: any) {
     if (!err.message?.includes("BUSYGROUP")) throw err;
   }
@@ -40,16 +44,16 @@ async function startStreamConsumer() {
     );
     const messages = Array.isArray(claimed) ? (claimed[1] ?? []) : [];
     if (messages.length > 0) {
-      console.log(`[Tokocrypto WS] Reclaimed ${messages.length} pending message(s) on startup`);
+      log.info({ count: messages.length }, 'Reclaimed pending messages on startup');
       for (const [id, fields] of messages) {
         await handleStreamMessage(id, fields);
       }
     }
   } catch (err) {
-    console.error("[Tokocrypto WS] XAUTOCLAIM failed on startup:", err);
+    log.error({ err }, 'XAUTOCLAIM failed on startup');
   }
 
-  console.log("[Tokocrypto WS] Listening for control commands via Redis Streams...");
+  log.info('Listening for control commands via Redis Streams');
   while (true) {
     try {
       const results = await control.xreadgroup(
@@ -67,7 +71,7 @@ async function startStreamConsumer() {
         }
       }
     } catch (err) {
-      console.error("[Tokocrypto WS] Stream read error:", err);
+      log.error({ err }, 'Stream read error');
       await new Promise((r) => setTimeout(r, 1000));
     }
   }
@@ -91,18 +95,18 @@ async function handleStreamMessage(id: string, fields: string[]) {
 
     await control.xack(STREAM_KEY, GROUP_NAME, id);
   } catch (err) {
-    console.error("[Tokocrypto WS] Error handling stream message:", id, err);
+    log.error({ err, messageId: id }, 'Error handling stream message');
   }
 }
 
 startStreamConsumer().catch((err) => {
-  console.error("[Tokocrypto WS] Stream consumer fatal error:", err);
+  log.fatal({ err }, 'Stream consumer fatal error');
   process.exit(1);
 });
 
 // ---- Restore connections for users with active trades on startup ---- //
 async function restoreConnections() {
-  console.log("[Tokocrypto WS] Restoring connections for users with active trades...");
+  log.info('Restoring connections for users with active trades');
 
   try {
     const activeTrades = await postgresDb
@@ -116,13 +120,13 @@ async function restoreConnections() {
         ),
       );
 
-    console.log(`[Tokocrypto WS] Found ${activeTrades.length} users with active trades to reconnect`);
+    log.info({ count: activeTrades.length }, 'Found users with active trades to reconnect');
 
     for (const { exchange_user_id } of activeTrades) {
       ensureConnection(exchange_user_id);
     }
   } catch (err) {
-    console.error("[Tokocrypto WS] Failed to restore connections on startup:", err);
+    log.error({ err }, 'Failed to restore connections on startup');
   }
 }
 
@@ -156,17 +160,17 @@ async function ensureConnection(
   let existing = connections.get(userId);
 
   if (existing?.ws && existing.ws.readyState === WebSocket.OPEN) {
-    console.log(`WS Worker: connection already open for user ${userId}`);
+    log.debug({ userId }, 'Connection already open');
     return;
   }
 
   const creds = await fetchCreds(userId);
   if (!creds) {
-    console.warn(`WS Worker: No credentials found for user ${userId}`);
+    log.warn({ userId }, 'No credentials found');
     return;
   }
 
-  console.log(`WS Worker: Opening WS for user ${userId}`);
+  log.info({ userId }, 'Opening WebSocket connection');
 
   // Tokocrypto uses Binance Cloud WebSocket
   const wsUrl = "wss://stream-tokocrypto.com/stream";
@@ -183,7 +187,7 @@ async function ensureConnection(
   ws.on("message", (raw: Buffer) => onWsMessage(userId, raw));
   ws.on("close", (code, reason) => onWsClose(userId, code, reason));
   ws.on("error", (err) =>
-    console.error(`WS Worker: WS error (${userId})`, err),
+    log.error({ err, userId }, 'WebSocket error'),
   );
 }
 
@@ -191,7 +195,7 @@ function closeConnection(userId: string) {
   const state = connections.get(userId);
   if (!state) return;
 
-  console.log(`WS Worker: Closing connection for user ${userId}`);
+  log.info({ userId }, 'Closing WebSocket connection');
 
   if (state.pingInterval) clearInterval(state.pingInterval);
   if (state.ws) state.ws.terminate();
@@ -207,7 +211,7 @@ function onWsOpen(
   ws: WebSocket,
   creds: { apiKey: string; apiSecret: string },
 ) {
-  console.log(`WS Worker: WS OPEN for user ${userId}`);
+  log.info({ userId }, 'WebSocket open');
 
   const state = connections.get(userId);
   if (!state) return;
@@ -230,7 +234,7 @@ function onWsOpen(
       id: 1,
     }),
   );
-  console.log(`📡 SUBSCRIBED to streams for user=${userId}`);
+  log.info({ userId }, 'Subscribed to channels');
 
   // Setup ping interval (Binance requires ping every 3 minutes)
   if (state.pingInterval) clearInterval(state.pingInterval);
@@ -238,7 +242,7 @@ function onWsOpen(
   state.pingInterval = setInterval(() => {
     if (ws.readyState === WebSocket.OPEN) {
       ws.ping();
-      console.log(`🏓 PING → user=${userId}`);
+      log.debug({ userId }, 'Ping sent');
     }
   }, 180_000); // 3 minutes
 }
@@ -248,13 +252,13 @@ async function onWsMessage(userId: string, raw: Buffer) {
   try {
     msg = JSONbig.parse(raw.toString());
   } catch (err) {
-    console.error("WS Worker: failed to parse WS message", err);
+    log.error({ err }, 'Failed to parse WS message');
     return;
   }
 
   // Handle subscription response
   if (msg?.result === null && msg?.id) {
-    console.log(`✅ Subscription confirmed for user=${userId}`);
+    log.debug({ userId }, 'Subscription confirmed');
     return;
   }
 
@@ -270,9 +274,7 @@ async function onWsMessage(userId: string, raw: Buffer) {
 }
 
 function onWsClose(userId: string, code: number, reason: Buffer) {
-  console.warn(
-    `WS Worker: WS CLOSED user=${userId} code=${code} reason=${reason.toString()}`,
-  );
+  log.warn({ userId, code, reason: reason.toString() }, 'WebSocket closed');
 
   const state = connections.get(userId);
   if (!state) return;
@@ -288,7 +290,7 @@ function onWsClose(userId: string, code: number, reason: Buffer) {
   const delay = state.backoff;
   state.backoff = Math.min(state.backoff * 1.5, 60_000); // Max 60s backoff
 
-  console.log(`WS Worker: Reconnecting user ${userId} in ${delay}ms...`);
+  log.info({ userId, delay }, 'Scheduling reconnect');
 
   // Schedule reconnection
   setTimeout(() => ensureConnection(userId), delay);
@@ -302,7 +304,7 @@ async function handleOrderUpdate(userId: string, msg: any) {
   const order = msg.o;
   const event = classifyOrderEvent(order);
 
-  console.log(`📥 ORDER UPDATE (${userId}): event=${event}`, order);
+  log.debug({ userId }, 'Order update');
 
   let tradeData: Trade | null = null;
   if (order?.i) {
@@ -313,7 +315,7 @@ async function handleOrderUpdate(userId: string, msg: any) {
         .where(eq(trades.trade_id, String(order.i)));
       tradeData = row;
     } catch (e) {
-      console.error(e, "error query");
+      log.error({ err: e }, 'Error querying trade');
     }
   }
 
@@ -321,7 +323,7 @@ async function handleOrderUpdate(userId: string, msg: any) {
   switch (event) {
     case "order_filled_open":
       if (order.i) {
-        console.log(`Updating trade ${order.i} to "waiting_targets"`);
+        log.info({ orderId: order.i }, 'Trade → waiting_targets');
         await postgresDb
           .update(trades)
           .set({ status: "waiting_targets" })
@@ -331,7 +333,7 @@ async function handleOrderUpdate(userId: string, msg: any) {
 
     case "order_filled_close":
       if (order.i) {
-        console.log(`Closing trade ${order.i}`);
+        log.info({ orderId: order.i }, 'Trade → closed');
         await postgresDb
           .update(trades)
           .set({
@@ -344,7 +346,7 @@ async function handleOrderUpdate(userId: string, msg: any) {
 
     case "order_cancelled":
       if (order.i) {
-        console.log(`Cancelling trade ${order.i}`);
+        log.info({ orderId: order.i }, 'Trade → cancelled');
         await postgresDb
           .update(trades)
           .set({ status: "cancelled" })
@@ -354,7 +356,7 @@ async function handleOrderUpdate(userId: string, msg: any) {
 
     case "order_partial_fill":
       if (order.i) {
-        console.log(`Partial fill for trade ${order.i}`);
+        log.info({ orderId: order.i }, 'Trade partially filled');
         await postgresDb
           .update(trades)
           .set({ status: "partially_filled" })
@@ -363,7 +365,7 @@ async function handleOrderUpdate(userId: string, msg: any) {
       break;
 
     default:
-      console.log("Order event not handled:", order);
+      log.debug({ event: order?.e }, 'Order event not handled');
   }
 
   // Publish to Redis
@@ -377,7 +379,7 @@ async function handleOrderUpdate(userId: string, msg: any) {
 async function handlePositionUpdate(userId: string, msg: any) {
   const positions = msg.a?.P || [];
 
-  console.log(`📥 POSITION UPDATE (${userId}):`, positions);
+  log.debug({ userId }, 'Position update');
 
   for (const position of positions) {
     const positionKey = `${position.s}:${position.ps}`;
@@ -385,7 +387,7 @@ async function handlePositionUpdate(userId: string, msg: any) {
 
     // Check if position is closed (size = 0)
     if (size === 0) {
-      console.log(`Position closed: ${positionKey}`);
+      log.info({ positionKey }, 'Position closed');
 
       // Find and close trade
       const exchange = await postgresDb.query.exchanges.findFirst({
@@ -469,7 +471,7 @@ function classifyOrderEvent(order: any): OrderEvent {
 // ------------------------------------------- //
 
 process.on("SIGINT", () => {
-  console.log("WS Worker: shutting down...");
+  log.info('Shutting down');
 
   for (const [userId, st] of connections.entries()) {
     if (st.ws) st.ws.terminate();
@@ -477,4 +479,4 @@ process.on("SIGINT", () => {
   process.exit(0);
 });
 
-console.log("✅ Tokocrypto WebSocket Worker started");
+log.info('Worker started successfully');

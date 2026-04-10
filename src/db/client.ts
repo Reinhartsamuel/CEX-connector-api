@@ -1,6 +1,9 @@
 import { drizzle } from 'drizzle-orm/postgres-js';
 import postgres from 'postgres';
 import * as schema from './schema';
+import { createLogger } from '../utils/logger';
+
+const log = createLogger({ process: 'api', component: 'db' });
 
 // Create database connection
 const connectionString = process.env.DATABASE_URL;
@@ -23,17 +26,17 @@ export const postgresDb = drizzle(client, { schema });
 export async function testConnection(): Promise<boolean> {
   try {
     await client`SELECT 1`;
-    console.log('✅ PostgreSQL connected successfully');
+    log.info('PostgreSQL connected successfully');
     return true;
-  } catch (error) {
-    console.error('❌ PostgreSQL connection failed:', error);
+  } catch (err) {
+    log.error({ err }, 'PostgreSQL connection failed');
     return false;
   }
 }
 
 // Graceful shutdown
 export async function closeConnection(): Promise<void> {
-  console.log('🔌 Closing PostgreSQL connections...');
+  log.info('Closing PostgreSQL connections');
   await client.end();
 }
 

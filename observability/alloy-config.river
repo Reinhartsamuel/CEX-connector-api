@@ -1,0 +1,45 @@
+// Alloy configuration — scrapes the API's /metrics endpoint and remote_writes to Mimir
+// Set BYSCRIPT_API_URL env var to the Railway (or local) API base URL before starting.
+
+prometheus.scrape "byscript_api" {
+  targets = [
+    {
+      __address__ = coalesce(env("BYSCRIPT_API_HOST"), "host.docker.internal:1122"),
+    },
+  ]
+  metrics_path    = "/metrics"
+  scrape_interval = "15s"
+
+  // Optional bearer token auth if METRICS_TOKEN is set on the API
+  bearer_token = env("METRICS_TOKEN")
+
+  forward_to = [prometheus.remote_write.mimir.receiver]
+}
+
+prometheus.remote_write "mimir" {
+  endpoint {
+    url = "http://mimir:9009/api/v1/push"
+  }
+}
+
+// OTLP receiver — forwards traces to Tempo (for future use when OTel is added)
+otelcol.receiver.otlp "default" {
+  grpc {
+    endpoint = "0.0.0.0:4317"
+  }
+  http {
+    endpoint = "0.0.0.0:4318"
+  }
+  output {
+    traces = [otelcol.exporter.otlp.tempo.input]
+  }
+}
+
+otelcol.exporter.otlp "tempo" {
+  client {
+    endpoint = "tempo:4317"
+    tls {
+      insecure = true
+    }
+  }
+}

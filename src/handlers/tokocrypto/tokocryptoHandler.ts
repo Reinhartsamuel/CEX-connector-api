@@ -15,6 +15,9 @@ import {
   getOrDecryptDEK,
 } from "../../utils/cryptography/kmsUtils";
 import {
+import { createLogger } from '../../utils/logger';
+
+const log = createLogger({ exchange: 'tokocrypto', process: 'handler' });
   tokocryptoRegisterUserSchema,
   tokocryptoPlaceOrderSchema,
   tokocryptoCancelOrderSchema,
@@ -139,7 +142,7 @@ export const TokocryptoHandler = {
         exchangeRecord,
       });
     } catch (e) {
-      console.error(e, "ERROR 500 REGISTER USER tokocryptoServices");
+      log.error({ err: e }, 'ERROR 500 REGISTER USER tokocryptoServices');
       if (e instanceof Error) {
         return c.json(
           {
@@ -285,7 +288,7 @@ export const TokocryptoHandler = {
 
       return c.json(allReturn);
     } catch (e) {
-      console.error(e, "ERROR 500 ORDER tokocryptoServices");
+      log.error({ err: e }, 'ERROR 500 ORDER tokocryptoServices');
 
       // Clear credentials on error
       TokocryptoServices.clearCredentials();
@@ -348,7 +351,7 @@ export const TokocryptoHandler = {
               .set({ status: 'cancelled' })
               .where(eq(trades.id, result.value.id));
           } else {
-            console.log(`Cancelling status: ${result.status} failed!!!`);
+            log.info({}, 'Cancelling status: ${result.status} failed!!!');
           }
         })
       );
@@ -357,7 +360,7 @@ export const TokocryptoHandler = {
 
       return c.json(results);
     } catch (e) {
-      console.error(e, "ERROR 500 CANCEL ORDER tokocryptoServices");
+      log.error({ err: e }, 'ERROR 500 CANCEL ORDER tokocryptoServices');
       TokocryptoServices.clearCredentials();
 
       if (e instanceof Error) {
@@ -438,7 +441,7 @@ export const TokocryptoHandler = {
         closed_trades,
       });
     } catch (e) {
-      console.error(e, "ERROR 500 CLOSE POSITION tokocryptoServices");
+      log.error({ err: e }, 'ERROR 500 CLOSE POSITION tokocryptoServices');
       TokocryptoServices.clearCredentials();
 
       if (e instanceof Error) {
@@ -480,7 +483,7 @@ export const TokocryptoHandler = {
 
       return c.json(result);
     } catch (e) {
-      console.error(e, "ERROR 500 PLAYGROUND tokocryptoServices");
+      log.error({ err: e }, 'ERROR 500 PLAYGROUND tokocryptoServices');
       TokocryptoServices.clearCredentials();
 
       if (e instanceof Error) {

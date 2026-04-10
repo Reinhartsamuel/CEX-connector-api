@@ -14,6 +14,9 @@ import {
   getOrDecryptDEK,
 } from "../../utils/cryptography/kmsUtils";
 import {
+import { createLogger } from '../../utils/logger';
+
+const log = createLogger({ exchange: 'bitmart', process: 'handler' });
   bitmartRegisterUserSchema,
   bitmartPlaceOrderSchema,
   bitmartCancelOrderSchema,
@@ -146,7 +149,7 @@ export const BitmartHandler = {
         exchangeRecord,
       });
     } catch (e) {
-      console.error(e, "ERROR 500 REGISTER USER bitmart");
+      log.error({ err: e }, 'ERROR 500 REGISTER USER bitmart');
       if (e instanceof Error) {
         return c.json(
           {
@@ -261,7 +264,7 @@ export const BitmartHandler = {
 
       return c.json(allReturn);
     } catch (e) {
-      console.error(e, "ERROR 500 ORDER bitmart");
+      log.error({ err: e }, 'ERROR 500 ORDER bitmart');
 
       // Clear credentials on error
       BitmartServices.clearCredentials();
@@ -325,7 +328,7 @@ export const BitmartHandler = {
               .set({ status: 'cancelled' })
               .where(eq(trades.id, result.value.id));
           } else {
-            console.log(`Canceling status: ${result.status} failed!!!`);
+            log.info({}, 'Canceling status: ${result.status} failed!!!');
           }
         })
       );
@@ -334,7 +337,7 @@ export const BitmartHandler = {
 
       return c.json(results);
     } catch (e) {
-      console.error(e, "ERROR 500 CANCEL ORDER bitmart");
+      log.error({ err: e }, 'ERROR 500 CANCEL ORDER bitmart');
       BitmartServices.clearCredentials();
 
       if (e instanceof Error) {
@@ -415,7 +418,7 @@ export const BitmartHandler = {
         closed_trades,
       });
     } catch (e) {
-      console.error(e, "ERROR 500 CLOSE POSITION bitmart");
+      log.error({ err: e }, 'ERROR 500 CLOSE POSITION bitmart');
       BitmartServices.clearCredentials();
 
       if (e instanceof Error) {
@@ -457,7 +460,7 @@ export const BitmartHandler = {
 
       return c.json(result);
     } catch (e) {
-      console.error(e, "ERROR 500 PLAYGROUND bitmart");
+      log.error({ err: e }, 'ERROR 500 PLAYGROUND bitmart');
       BitmartServices.clearCredentials();
 
       if (e instanceof Error) {

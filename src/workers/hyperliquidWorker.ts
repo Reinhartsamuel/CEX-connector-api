@@ -4,6 +4,10 @@ import { postgresDb } from "../db/client";
 import { exchanges, trades } from "../db/schema";
 import { and, eq, inArray } from "drizzle-orm";
 import { publishWsReady } from "../utils/wsReady";
+import { createLogger, flushLogger } from "../utils/logger";
+import { wsConnectionsActive, tradesClosedTotal, exchangeErrorsTotal } from "../utils/metrics";
+
+const log = createLogger({ exchange: "hyperliquid", process: "worker" });
 
 const HL_BASE_URL = "https://api.hyperliquid.xyz";
 
@@ -29,7 +33,7 @@ const connections = new Map<string, HyperliquidConnection>();
 async function startStreamConsumer() {
   try {
     await control.xgroup("CREATE", STREAM_KEY, GROUP_NAME, "$", "MKSTREAM");
-    console.log(`[HL WS] Created consumer group '${GROUP_NAME}' on stream '${STREAM_KEY}'`);
+    log.info({ group: GROUP_NAME, stream: STREAM_KEY }, 'Created consumer group');
   } catch (err: any) {
     if (!err.message?.includes("BUSYGROUP")) throw err;
   }
@@ -41,16 +45,16 @@ async function startStreamConsumer() {
     );
     const messages = Array.isArray(claimed) ? (claimed[1] ?? []) : [];
     if (messages.length > 0) {
-      console.log(`[HL WS] Reclaimed ${messages.length} pending message(s) on startup`);
+      log.info({ count: messages.length }, 'Reclaimed pending messages on startup');
       for (const [id, fields] of messages) {
         await handleStreamMessage(id, fields);
       }
     }
   } catch (err) {
-    console.error("[HL WS] XAUTOCLAIM failed on startup:", err);
+    log.error({ err }, 'XAUTOCLAIM failed on startup');
   }
 
-  console.log("[HL WS] Listening for control commands via Redis Streams...");
+  log.info('Listening for control commands via Redis Streams');
   while (true) {
     try {
       const results = await control.xreadgroup(
@@ -68,7 +72,7 @@ async function startStreamConsumer() {
         }
       }
     } catch (err) {
-      console.error("[HL WS] Stream read error:", err);
+      log.error({ err }, 'Stream read error');
       await new Promise((r) => setTimeout(r, 1000));
     }
   }
@@ -92,18 +96,18 @@ async function handleStreamMessage(id: string, fields: string[]) {
 
     await control.xack(STREAM_KEY, GROUP_NAME, id);
   } catch (err) {
-    console.error("[HL WS] Error handling stream message:", id, err);
+    log.error({ err, messageId: id }, 'Error handling stream message');
   }
 }
 
 startStreamConsumer().catch((err) => {
-  console.error("[HL WS] Stream consumer fatal error:", err);
+  log.fatal({ err }, 'Stream consumer fatal error');
   process.exit(1);
 });
 
 // ---- Restore connections for users with active trades on startup ---- //
 async function restoreConnections() {
-  console.log("[HL WS] Restoring connections for users with active trades...");
+  log.info('Restoring connections for users with active trades');
 
   try {
     const activeTrades = await postgresDb
@@ -117,13 +121,13 @@ async function restoreConnections() {
         ),
       );
 
-    console.log(`[HL WS] Found ${activeTrades.length} users with active trades to reconnect`);
+    log.info({ count: activeTrades.length }, 'Found users with active trades to reconnect');
 
     for (const { exchange_user_id } of activeTrades) {
       ensureConnection(exchange_user_id, exchange_user_id);
     }
   } catch (err) {
-    console.error("[HL WS] Failed to restore connections on startup:", err);
+    log.error({ err }, 'Failed to restore connections on startup');
   }
 }
 
@@ -140,17 +144,17 @@ async function ensureConnection(userId: string, userAddress: string) {
   let existing = connections.get(userId);
 
   if (existing?.ws && existing.ws.readyState === WebSocket.OPEN) {
-    console.log(`Hyperliquid WS Worker: connection already open for user ${userId}`);
+    log.debug({ userId }, 'Connection already open');
     publishWsReady(redis, "hyperliquid", userId).catch(() => {});
     return;
   }
 
   if (!userAddress) {
-    console.warn(`Hyperliquid WS Worker: No wallet address for user ${userId}`);
+    log.warn({ userId }, 'No wallet address for user');
     return;
   }
 
-  console.log(`Hyperliquid WS Worker: Opening WS for user ${userId} (address: ${userAddress})`);
+  log.info({ userId }, 'Opening WebSocket connection');
 
   // Determine WebSocket URL (check if testnet from exchanges table)
   const exchange = await postgresDb.query.exchanges.findFirst({
@@ -174,7 +178,7 @@ async function ensureConnection(userId: string, userAddress: string) {
   ws.on("message", (raw: Buffer) => onWsMessage(userId, raw));
   ws.on("close", (code, reason) => onWsClose(userId, code, reason));
   ws.on("error", (err) =>
-    console.error(`Hyperliquid WS Worker: WS error (${userId})`, err),
+    log.error({ err, userId }, 'WebSocket error'),
   );
 }
 
@@ -183,7 +187,7 @@ async function ensureConnection(userId: string, userAddress: string) {
 // ------------------------------------------- //
 
 function onWsOpen(userId: string, ws: WebSocket, userAddress: string) {
-  console.log(`Hyperliquid WS Worker: WS OPEN for user ${userId}`);
+  log.info({ userId }, 'WebSocket open');
 
   const state = connections.get(userId);
   if (!state) return;
@@ -201,7 +205,7 @@ function onWsOpen(userId: string, ws: WebSocket, userAddress: string) {
       },
     }),
   );
-  console.log(`📡 SUBSCRIBED (orderUpdates) user=${userId} address=${userAddress}`);
+  log.info({ userId }, 'Subscribed to channels');
 
   // Subscribe to userFills
   ws.send(
@@ -213,16 +217,16 @@ function onWsOpen(userId: string, ws: WebSocket, userAddress: string) {
       },
     }),
   );
-  console.log(`📡 SUBSCRIBED (userFills) user=${userId} address=${userAddress}`);
+  log.info({ userId }, 'Subscribed to channels');
 
   // Signal that WS is ready so executors can proceed with order placement
   publishWsReady(redis, "hyperliquid", userId).catch((err: any) =>
-    console.error(`Hyperliquid WS Worker: failed to publish ws-ready for user ${userId}:`, err),
+    log.error({ err, userId }, 'Failed to publish ws-ready'),
   );
 
   // Run snapshot reconciliation after subscribing
   reconcileSnapshot(userId, userAddress).catch((err: any) =>
-    console.error(`Hyperliquid WS Worker: reconciliation failed for user ${userId}:`, err),
+    log.error({ err, userId }, 'Reconciliation failed'),
   );
 
   // Setup ping interval (30 seconds - server timeout is 60s)
@@ -235,7 +239,7 @@ function onWsOpen(userId: string, ws: WebSocket, userAddress: string) {
           method: "ping",
         }),
       );
-      console.log(`🏓 PING → user=${userId}`);
+      log.debug({ userId }, 'Ping sent');
     }
   }, 30_000); // Every 30 seconds
 }
@@ -245,7 +249,7 @@ async function onWsMessage(userId: string, raw: Buffer) {
   try {
     msg = JSON.parse(raw.toString());
   } catch (err) {
-    console.error("Hyperliquid WS Worker: failed to parse WS message", err);
+    log.error({ err }, 'Failed to parse WS message');
     return;
   }
 
@@ -253,16 +257,13 @@ async function onWsMessage(userId: string, raw: Buffer) {
 
   // Handle subscription response
   if (channel === "subscriptionResponse") {
-    console.log(
-      `✅ Subscription ACK for user ${userId}:`,
-      JSON.stringify(msg.data, null, 2),
-    );
+    log.debug({ userId }, 'Subscription ACK');
     return;
   }
 
   // Handle pong
   if (channel === "pong") {
-    console.log(`🏓 PONG ← user=${userId}`);
+    log.debug({ userId }, 'Pong received');
     return;
   }
 
@@ -288,9 +289,7 @@ async function onWsMessage(userId: string, raw: Buffer) {
 }
 
 function onWsClose(userId: string, code: number, reason: Buffer) {
-  console.warn(
-    `Hyperliquid WS Worker: WS CLOSED user=${userId} code=${code} reason=${reason.toString()}`,
-  );
+  log.warn({ userId, code, reason: reason.toString() }, 'WebSocket closed');
 
   const state = connections.get(userId);
   if (!state) return;
@@ -305,7 +304,7 @@ function onWsClose(userId: string, code: number, reason: Buffer) {
   const delay = state.backoff;
   state.backoff = Math.min(state.backoff * 1.5, 60_000); // Max 60s
 
-  console.log(`Hyperliquid WS Worker: Reconnecting user ${userId} in ${delay}ms...`);
+  log.info({ userId, delay }, 'Scheduling reconnect');
 
   setTimeout(() => ensureConnection(userId, state.userAddress), delay);
 }
@@ -315,7 +314,7 @@ function onWsClose(userId: string, code: number, reason: Buffer) {
 // ------------------------------------------- //
 
 function closeConnection(userId: string) {
-  console.log(`Hyperliquid WS Worker: Closing WS for user ${userId}`);
+  log.info({ userId }, 'Closing WebSocket connection');
 
   const st = connections.get(userId);
   if (!st) return;
@@ -334,7 +333,7 @@ function closeConnection(userId: string) {
 // ------------------------------------------- //
 
 process.on("SIGINT", () => {
-  console.log("Hyperliquid WS Worker: shutting down...");
+  log.info('Shutting down');
 
   for (const [userId, st] of connections.entries()) {
     if (st.ws) st.ws.terminate();
@@ -353,14 +352,14 @@ process.on("SIGINT", () => {
  * Hyperliquid info endpoints are unauthenticated — just need the user address.
  */
 async function reconcileSnapshot(userId: string, userAddress: string) {
-  console.log(`[HL Reconcile] Starting snapshot reconciliation for user ${userId} (${userAddress})`);
+  log.info({ userId }, 'Starting snapshot reconciliation');
 
   const exchange = await postgresDb.query.exchanges.findFirst({
     columns: { id: true },
     where: eq(exchanges.exchange_user_id, userAddress.toLowerCase()),
   });
   if (!exchange) {
-    console.warn(`[HL Reconcile] No exchange record for address=${userAddress}`);
+    log.warn({ userId }, 'No exchange record found for reconcile');
     return;
   }
 
@@ -375,7 +374,7 @@ async function reconcileSnapshot(userId: string, userAddress: string) {
       ),
     );
 
-  console.log(`[HL Reconcile] Found ${pendingTrades.length} pending trades to check`);
+  log.info({ userId, count: pendingTrades.length }, 'Pending trades to reconcile');
 
   if (pendingTrades.length > 0) {
     // Fetch all open orders for this user
@@ -400,7 +399,7 @@ async function reconcileSnapshot(userId: string, userAddress: string) {
 
         if (openOids.has(oid)) {
           // Order is still open — no action needed
-          console.log(`[HL Reconcile] Order ${oid} still open, skipping`);
+          log.info('Reconcile: HL Reconcile] Order ${oid} still open, skipping');
           continue;
         }
 
@@ -428,7 +427,7 @@ async function reconcileSnapshot(userId: string, userAddress: string) {
                 })
                 .where(eq(trades.id, trade.id));
             });
-            console.log(`[HL Reconcile] Trade ${trade.id} (oid=${oid}) filled+closed, PnL=${closedPnl}`);
+            log.info('Reconcile: HL Reconcile] Trade ${trade.id} (oid=${oid}) filled+closed, PnL=${closedPnl}');
           } else {
             // Order filled, position still open
             await postgresDb
@@ -439,7 +438,7 @@ async function reconcileSnapshot(userId: string, userAddress: string) {
                 open_filled_at: Math.floor(fill.time / 1000),
               })
               .where(eq(trades.id, trade.id));
-            console.log(`[HL Reconcile] Trade ${trade.id} (oid=${oid}) filled → waiting_targets`);
+            log.info('Reconcile: HL Reconcile] Trade ${trade.id} (oid=${oid}) filled → waiting_targets');
           }
         } else {
           // No fill found and not in open orders → likely canceled
@@ -447,10 +446,10 @@ async function reconcileSnapshot(userId: string, userAddress: string) {
             .update(trades)
             .set({ status: "cancelled", cancelled_at: new Date() })
             .where(eq(trades.id, trade.id));
-          console.log(`[HL Reconcile] Trade ${trade.id} (oid=${oid}) not found in open/fills → cancelled`);
+          log.info('Reconcile: HL Reconcile] Trade ${trade.id} (oid=${oid}) not found in open/fills → cancelled');
         }
       } catch (err) {
-        console.error(`[HL Reconcile] Error checking trade ${trade.trade_id}:`, err);
+        log.error({ err, tradeId: trade.trade_id }, 'Reconcile: error checking trade');
       }
     }
   }
@@ -467,7 +466,7 @@ async function reconcileSnapshot(userId: string, userAddress: string) {
     );
 
   if (waitingTrades.length === 0) {
-    console.log(`[HL Reconcile] No waiting_targets trades to check`);
+    log.debug({ userId }, 'No waiting_targets trades to check');
     return;
   }
 
@@ -488,7 +487,7 @@ async function reconcileSnapshot(userId: string, userAddress: string) {
     }
   }
 
-  console.log(`[HL Reconcile] Open position coins: [${[...openPositionCoins].join(", ")}]`);
+  log.debug({ userId }, 'Open positions fetched');
 
   for (const trade of waitingTrades) {
     // Hyperliquid uses coin name (e.g. "BTC") not pair format
@@ -496,7 +495,7 @@ async function reconcileSnapshot(userId: string, userAddress: string) {
     const tradeCoin = trade.contract.replace("-USDT", "").replace("_USDT", "");
 
     if (!openPositionCoins.has(tradeCoin)) {
-      console.log(`[HL Reconcile] Trade ${trade.id} (${trade.contract}) has no open position — marking closed`);
+      log.info({ tradeId: trade.id }, 'Trade has no open position — marking closed');
 
       // Check fills for PnL data
       const userFills = await hlInfoRequest({ type: "userFills", user: userAddress });
@@ -517,7 +516,7 @@ async function reconcileSnapshot(userId: string, userAddress: string) {
     }
   }
 
-  console.log(`[HL Reconcile] Snapshot reconciliation complete for user ${userId}`);
+  log.info({ userId }, 'Snapshot reconciliation complete');
 }
 
 /**
@@ -531,12 +530,12 @@ async function hlInfoRequest(body: Record<string, any>) {
       body: JSON.stringify(body),
     });
     if (!response.ok) {
-      console.error(`[HL Info] Request failed: ${response.status} ${await response.text()}`);
+      log.error({ status: response.status }, 'HL Info request failed');
       return null;
     }
     return await response.json();
   } catch (err) {
-    console.error(`[HL Info] Request error:`, err);
+    log.error({ err }, 'HL Info request error');
     return null;
   }
 }
@@ -590,9 +589,7 @@ async function handleOrderUpdate(userId: string, wsOrder: WsOrder) {
     const oid = String(wsOrder.order.oid);
     const status = wsOrder.status;
 
-    console.log(
-      `📥 ORDER UPDATE user=${userId} oid=${oid} status=${status} coin=${wsOrder.order.coin}`,
-    );
+    log.debug({ userId, oid, status, coin: wsOrder.order.coin }, 'Order update');
 
     // Map Hyperliquid status to database status
     let dbStatus: string | null = null;
@@ -613,7 +610,7 @@ async function handleOrderUpdate(userId: string, wsOrder: WsOrder) {
         dbStatus = "error";
         break;
       default:
-        console.log(`Unknown order status: ${status}`);
+        log.debug({ status }, 'Unknown order status');
     }
 
     if (!dbStatus) return;
@@ -626,7 +623,7 @@ async function handleOrderUpdate(userId: string, wsOrder: WsOrder) {
       .limit(1);
 
     if (!trade) {
-      console.warn(`Trade not found for OID ${oid}, skipping order update`);
+      log.warn({ oid }, 'Trade not found, skipping');
       return;
     }
 
@@ -642,7 +639,7 @@ async function handleOrderUpdate(userId: string, wsOrder: WsOrder) {
       })
       .where(eq(trades.id, trade.id));
 
-    console.log(`✅ Updated trade ${trade.id} to status: ${dbStatus}`);
+    log.info({ tradeId: trade.id, status: dbStatus }, 'Trade updated');
 
     // Publish to Redis
     await redis.publish(
@@ -650,7 +647,7 @@ async function handleOrderUpdate(userId: string, wsOrder: WsOrder) {
       JSON.stringify(wsOrder),
     );
   } catch (err) {
-    console.error(`Error handling order update for user ${userId}:`, err);
+    log.error({ err, userId }, 'Error handling order update');
   }
 }
 
@@ -658,15 +655,11 @@ async function handleUserFill(userId: string, fillData: WsUserFills) {
   try {
     // Skip snapshot (historical data, likely already processed)
     if (fillData.isSnapshot === true) {
-      console.log(`📸 Skipping snapshot for user ${userId} (${fillData.fills.length} fills)`);
+      log.debug({ userId }, 'Skipping snapshot');
       return;
     }
 
-    console.log(
-      `💰 FILLS UPDATE user=${userId} count=${fillData.fills.length}`,
-    );
-
-    console.log(JSON.stringify(fillData, null, 2), "fillData")
+    log.debug({ userId, fillCount: fillData.fills.length }, 'Fills update');
 
     // Process each fill
     await Promise.all(
@@ -681,7 +674,7 @@ async function handleUserFill(userId: string, fillData: WsUserFills) {
       JSON.stringify(fillData),
     );
   } catch (err) {
-    console.error(`Error handling user fills for user ${userId}:`, err);
+    log.error({ err, userId }, 'Error handling user fills');
   }
 }
 
@@ -691,9 +684,7 @@ async function processFill(userId: string, fill: WsFill) {
     const closedPnl = parseFloat(fill.closedPnl);
     const isPositionClosed = closedPnl !== 0;
 
-    console.log(
-      `🔍 Processing fill: oid=${oid} coin=${fill.coin} px=${fill.px} sz=${fill.sz} closedPnl=${fill.closedPnl}`,
-    );
+    log.debug({ oid, coin: fill.coin, px: fill.px, sz: fill.sz, closedPnl: fill.closedPnl }, 'Processing fill');
 
     // Find trade by OID
     const [trade] = await postgresDb
@@ -703,9 +694,7 @@ async function processFill(userId: string, fill: WsFill) {
       .limit(1);
 
     if (!trade) {
-      console.warn(
-        `Fill received for unknown OID ${oid} (coin: ${fill.coin}). May be manual order or pre-worker order.`,
-      );
+      log.warn({ oid, coin: fill.coin }, 'Fill received for unknown OID — may be manual or pre-worker order');
       return;
     }
 
@@ -724,7 +713,7 @@ async function processFill(userId: string, fill: WsFill) {
         updateData.status = "waiting_targets";
         updateData.open_fill_price = fill.px;
         updateData.open_filled_at = Math.floor(fill.time / 1000); // Convert ms to seconds
-        console.log(`🎯 First fill for trade ${trade.id}: setting fill price and time`);
+        log.info({ tradeId: trade.id }, 'First fill for trade');
       }
 
       // If position closed
@@ -734,9 +723,8 @@ async function processFill(userId: string, fill: WsFill) {
         updateData.closed_at = new Date();
         updateData.close_fill_price = fill.px;
         updateData.close_filled_at = Math.floor(fill.time / 1000);
-        console.log(
-          `🔒 Position closed for trade ${trade.id}: PnL=${closedPnl} price=${fill.px}`,
-        );
+        log.info({ tradeId: trade.id, pnl: closedPnl, price: fill.px }, 'Position closed');
+        tradesClosedTotal.inc({ exchange: "hyperliquid" });
       }
 
       await tx
@@ -745,10 +733,11 @@ async function processFill(userId: string, fill: WsFill) {
         .where(eq(trades.id, trade.id));
     });
 
-    console.log(`✅ Processed fill for trade ${trade.id}`);
+    log.info({ tradeId: trade.id }, 'Fill processed');
   } catch (err) {
-    console.error(`Error processing fill for oid ${fill.oid}:`, err);
+    log.error({ err, oid: fill.oid }, 'Error processing fill');
+    exchangeErrorsTotal.inc({ exchange: "hyperliquid", component: "worker" });
   }
 }
 
-console.log("🚀 Hyperliquid Worker Runner started successfully");
+log.info('Worker started successfully');

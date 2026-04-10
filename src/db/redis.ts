@@ -1,4 +1,7 @@
 import Redis from "ioredis";
+import { createLogger } from '../utils/logger';
+
+const log = createLogger({ process: 'api', component: 'redis' });
 
 const redisUrl = process.env.REDIS_URL || "redis://127.0.0.1:6379";
 
@@ -13,21 +16,21 @@ export const redis = new Redis(redisUrl, {
 
 // Connection event handlers
 redis.on('connect', () => {
-  console.log('✅ Redis connected successfully');
+  log.info('Redis connected successfully');
 });
 
 redis.on('error', (err) => {
-  console.error('❌ Redis connection error:', err);
+  log.error({ err }, 'Redis connection error');
 });
 
 redis.on('close', () => {
-  console.log('🔌 Redis connection closed');
+  log.info('Redis connection closed');
 });
 
 // Test connection on startup
 redis.ping()
-  .then(() => console.log('✅ Redis ping successful'))
-  .catch(err => console.error('❌ Redis ping failed:', err));
+  .then(() => log.info('Redis ping successful'))
+  .catch(err => log.error({ err }, 'Redis ping failed'));
 
 export default redis;
 

@@ -5,6 +5,10 @@ import { and, eq } from 'drizzle-orm';
 import redis from '../db/redis';
 import type { ExchangeExecutor, ExecutorContext, ExecutorResult, SignalOverrides } from './types';
 import type { Autotrader } from '../db/schema';
+import { createLogger } from '../utils/logger';
+import { exchangeErrorsTotal } from '../utils/metrics';
+
+const log = createLogger({ exchange: 'bitget', process: 'executor' });
 
 export const BitgetExecutor: ExchangeExecutor = {
   async execute(ctx: ExecutorContext): Promise<ExecutorResult> {
@@ -62,7 +66,8 @@ async function openPosition(ctx: ExecutorContext): Promise<ExecutorResult> {
 
   if (!res?.id) {
     const errMsg = res?.message || (res as any)?.info?.msg || JSON.stringify(res);
-    console.error('[BitgetExecutor] placeOrder failed:', errMsg);
+    exchangeErrorsTotal.inc({ exchange: 'bitget', component: 'executor' });
+    log.error({ errMsg }, 'placeOrder failed');
     return { success: false, error: `Bitget order rejected: ${errMsg}` };
   }
 
@@ -97,7 +102,7 @@ async function openPosition(ctx: ExecutorContext): Promise<ExecutorResult> {
       metadata: res,
     } as any);
   } catch (err) {
-    console.error('[BitgetExecutor] Failed to persist trade to DB:', err);
+    log.error({ err }, 'Failed to persist trade to DB');
   }
 
   return {
@@ -132,7 +137,8 @@ async function closePosition(ctx: ExecutorContext): Promise<ExecutorResult> {
         });
         return { trade, res };
       } catch (err: any) {
-        console.error('[BitgetExecutor] closePosition failed:', err.message);
+        exchangeErrorsTotal.inc({ exchange: 'bitget', component: 'executor' });
+        log.error({ err }, 'closePosition failed');
         return { trade, res: null };
       }
     }),

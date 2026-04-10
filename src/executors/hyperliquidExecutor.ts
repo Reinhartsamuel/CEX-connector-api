@@ -5,6 +5,10 @@ import { and, eq } from 'drizzle-orm';
 import redis from '../db/redis';
 import type { ExchangeExecutor, ExecutorContext, ExecutorResult, SignalOverrides } from './types';
 import type { Autotrader } from '../db/schema';
+import { createLogger } from '../utils/logger';
+import { exchangeErrorsTotal } from '../utils/metrics';
+
+const log = createLogger({ exchange: 'hyperliquid', process: 'executor' });
 
 export const HyperliquidExecutor: ExchangeExecutor = {
   async execute(ctx: ExecutorContext): Promise<ExecutorResult> {
@@ -77,7 +81,8 @@ async function openPosition(ctx: ExecutorContext): Promise<ExecutorResult> {
 
   if (res?.status !== 'ok' || (!isFilled && !isResting)) {
     const errMsg = firstStatus?.error || JSON.stringify(res);
-    console.error('[HyperliquidExecutor] placeOrder failed:', errMsg);
+    exchangeErrorsTotal.inc({ exchange: 'hyperliquid', component: 'executor' });
+    log.error({ errMsg }, 'placeOrder failed');
     return { success: false, error: `Hyperliquid order rejected: ${errMsg}` };
   }
 
@@ -98,7 +103,7 @@ async function openPosition(ctx: ExecutorContext): Promise<ExecutorResult> {
       size: formattedSize,
       price: formattedTpPrice,
       reduce_only: true,
-    }).catch((err) => console.error('[HyperliquidExecutor] TP order failed:', err));
+    }).catch((err) => log.error({ err }, 'TP order failed'));
   }
 
   if ((isMarket ? isFilled : true) && overrides.stop_loss?.enabled) {
@@ -111,7 +116,7 @@ async function openPosition(ctx: ExecutorContext): Promise<ExecutorResult> {
       size: formattedSize,
       price: formattedSlPrice,
       reduce_only: true,
-    }).catch((err) => console.error('[HyperliquidExecutor] SL order failed:', err));
+    }).catch((err) => log.error({ err }, 'SL order failed'));
   }
 
   try {
@@ -142,7 +147,7 @@ async function openPosition(ctx: ExecutorContext): Promise<ExecutorResult> {
       metadata: res,
     } as any);
   } catch (err) {
-    console.error('[HyperliquidExecutor] Failed to persist trade to DB:', err);
+    log.error({ err }, 'Failed to persist trade to DB');
   }
 
   return {
@@ -186,7 +191,8 @@ async function closePosition(ctx: ExecutorContext): Promise<ExecutorResult> {
       const statuses = res?.response?.data?.statuses;
       const filled = statuses?.[0]?.filled;
       if (!filled) {
-        console.error('[HyperliquidExecutor] closePosition failed:', statuses?.[0]?.error || JSON.stringify(res));
+        exchangeErrorsTotal.inc({ exchange: 'hyperliquid', component: 'executor' });
+        log.error({ error: statuses?.[0]?.error, res }, 'closePosition failed');
       }
       return { trade, res, filled };
     }),

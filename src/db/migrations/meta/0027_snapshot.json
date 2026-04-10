@@ -1,6 +1,6 @@
 {
-  "id": "dd577fb3-8f6f-4d30-bee1-8afe2b6788ce",
-  "prevId": "9effc94a-e712-450f-8583-8a446cc595fd",
+  "id": "cd5890d9-4645-4b41-96cd-6711916180b9",
+  "prevId": "dd577fb3-8f6f-4d30-bee1-8afe2b6788ce",
   "version": "7",
   "dialect": "postgresql",
   "tables": {
@@ -122,6 +122,12 @@
         "webhook_token": {
           "name": "webhook_token",
           "type": "text",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "contract_value_multiplier": {
+          "name": "contract_value_multiplier",
+          "type": "numeric(20, 8)",
           "primaryKey": false,
           "notNull": false
         }

@@ -6,6 +6,10 @@ import { and, eq, inArray } from "drizzle-orm";
 import { signRequestOkxWs, signRequestOkx } from "../utils/authentication/signRequestOkx";
 import { publishWsReady } from "../utils/wsReady";
 import { decryptExchangeCreds } from "../utils/cryptography/decryptExchangeCreds";
+import { createLogger, flushLogger } from "../utils/logger";
+import { wsConnectionsActive, tradesClosedTotal, exchangeErrorsTotal } from "../utils/metrics";
+
+const log = createLogger({ exchange: "okx", process: "worker" });
 
 // ---- Redis Setup ---- //
 const redis = new Redis(process.env.REDIS_URL || "redis://127.0.0.1:6379");
@@ -29,7 +33,7 @@ const connections = new Map<string, OkxConnection>();
 async function startStreamConsumer() {
   try {
     await control.xgroup("CREATE", STREAM_KEY, GROUP_NAME, "$", "MKSTREAM");
-    console.log(`[OKX WS] Created consumer group '${GROUP_NAME}' on stream '${STREAM_KEY}'`);
+    log.info({ group: GROUP_NAME, stream: STREAM_KEY }, 'Created consumer group');
   } catch (err: any) {
     if (!err.message?.includes("BUSYGROUP")) throw err;
   }
@@ -41,16 +45,16 @@ async function startStreamConsumer() {
     );
     const messages = Array.isArray(claimed) ? (claimed[1] ?? []) : [];
     if (messages.length > 0) {
-      console.log(`[OKX WS] Reclaimed ${messages.length} pending message(s) on startup`);
+      log.info({ count: messages.length }, 'Reclaimed pending messages on startup');
       for (const [id, fields] of messages) {
         await handleStreamMessage(id, fields);
       }
     }
   } catch (err) {
-    console.error("[OKX WS] XAUTOCLAIM failed on startup:", err);
+    log.error({ err }, 'XAUTOCLAIM failed on startup');
   }
 
-  console.log("[OKX WS] Listening for control commands via Redis Streams...");
+  log.info('Listening for control commands via Redis Streams');
   while (true) {
     try {
       const results = await control.xreadgroup(
@@ -68,7 +72,7 @@ async function startStreamConsumer() {
         }
       }
     } catch (err) {
-      console.error("[OKX WS] Stream read error:", err);
+      log.error({ err }, 'Stream read error');
       await new Promise((r) => setTimeout(r, 1000));
     }
   }
@@ -92,18 +96,18 @@ async function handleStreamMessage(id: string, fields: string[]) {
 
     await control.xack(STREAM_KEY, GROUP_NAME, id);
   } catch (err) {
-    console.error("[OKX WS] Error handling stream message:", id, err);
+    log.error({ err, messageId: id }, 'Error handling stream message');
   }
 }
 
 startStreamConsumer().catch((err) => {
-  console.error("[OKX WS] Stream consumer fatal error:", err);
+  log.fatal({ err }, 'Stream consumer fatal error');
   process.exit(1);
 });
 
 // ---- Restore connections for users with active trades on startup ---- //
 async function restoreConnections() {
-  console.log("[OKX WS] Restoring connections for users with active trades...");
+  log.info('Restoring connections for users with active trades');
 
   try {
     const activeTrades = await postgresDb
@@ -117,13 +121,13 @@ async function restoreConnections() {
         ),
       );
 
-    console.log(`[OKX WS] Found ${activeTrades.length} users with active trades to reconnect`);
+    log.info({ count: activeTrades.length }, 'Found users with active trades to reconnect');
 
     for (const { exchange_user_id } of activeTrades) {
       ensureConnection(exchange_user_id);
     }
   } catch (err) {
-    console.error("[OKX WS] Failed to restore connections on startup:", err);
+    log.error({ err }, 'Failed to restore connections on startup');
   }
 }
 
@@ -144,18 +148,18 @@ async function ensureConnection(userId: string) {
   const existing = connections.get(userId);
 
   if (existing?.ws && existing.ws.readyState === WebSocket.OPEN) {
-    console.log(`OKX WS Worker: connection already open for user ${userId}`);
+    log.debug({ userId }, "Connection already open");
     publishWsReady(redis, "okx", userId).catch(() => {});
     return;
   }
 
   const creds = await fetchCreds(userId);
   if (!creds) {
-    console.warn(`OKX WS Worker: No credentials found for user ${userId}`);
+    log.warn({ userId }, "No credentials found");
     return;
   }
 
-  console.log(`OKX WS Worker: Opening WS for user ${userId}`);
+  log.info({ userId }, "Opening WebSocket connection");
 
   const ws = new WebSocket("wss://ws.okx.com:8443/ws/v5/private");
 
@@ -169,9 +173,10 @@ async function ensureConnection(userId: string) {
   ws.on("open", () => onWsOpen(userId, ws, creds));
   ws.on("message", (raw: Buffer) => onWsMessage(userId, raw, creds));
   ws.on("close", (code, reason) => onWsClose(userId, code, reason));
-  ws.on("error", (err) =>
-    console.error(`OKX WS Worker: WS error (${userId})`, err),
-  );
+  ws.on("error", (err) => {
+    log.error({ err, userId }, "WebSocket error");
+    exchangeErrorsTotal.inc({ exchange: "okx", component: "worker" });
+  });
 }
 
 // ------------------------------------------- //
@@ -183,7 +188,8 @@ function onWsOpen(
   ws: WebSocket,
   creds: { apiKey: string; apiSecret: string; passphrase: string },
 ) {
-  console.log(`OKX WS Worker: WS OPEN for user ${userId}`);
+  log.info({ userId }, "WebSocket open");
+  wsConnectionsActive.inc({ exchange: "okx" });
 
   const state = connections.get(userId);
   if (!state) return;
@@ -208,7 +214,7 @@ function onWsOpen(
       ],
     }),
   );
-  console.log(`OKX WS Worker: LOGIN sent for user ${userId}`);
+  log.info({ userId }, "Login sent");
 
   // Setup ping interval (OKX requires "ping" text every 30s)
   if (state.pingInterval) clearInterval(state.pingInterval);
@@ -234,14 +240,14 @@ async function onWsMessage(
   try {
     msg = JSON.parse(rawStr);
   } catch (err) {
-    console.error("OKX WS Worker: failed to parse WS message", err);
+    log.error({ err }, "Failed to parse WS message");
     return;
   }
 
   // Handle login response
   if (msg.event === "login") {
     if (msg.code === "0") {
-      console.log(`OKX WS Worker: LOGIN SUCCESS for user ${userId}`);
+      log.info({ userId }, "Login success");
 
       const state = connections.get(userId);
       if (state) state.loggedIn = true;
@@ -258,27 +264,28 @@ async function onWsMessage(
             ],
           }),
         );
-        console.log(`OKX WS Worker: SUBSCRIBED (orders+positions) user=${userId}`);
+        log.info({ userId, channels: ["orders", "positions"] }, "Subscribed");
       }
 
       // Signal that WS is ready so executors can proceed with order placement
       publishWsReady(redis, "okx", userId).catch((err) =>
-        console.error(`OKX WS Worker: failed to publish ws-ready for user ${userId}:`, err),
+        log.error({ err, userId }, "Failed to publish ws-ready"),
       );
 
       // Run snapshot reconciliation after subscribing
       reconcileSnapshot(userId, creds).catch((err) =>
-        console.error(`OKX WS Worker: reconciliation failed for user ${userId}:`, err),
+        log.error({ err, userId }, "Reconciliation failed"),
       );
     } else {
-      console.error(`OKX WS Worker: LOGIN FAILED for user ${userId}: code=${msg.code} msg=${msg.msg}`);
+      log.error({ userId, code: msg.code, msg: msg.msg }, "Login failed");
+      exchangeErrorsTotal.inc({ exchange: "okx", component: "worker" });
     }
     return;
   }
 
   // Handle subscription confirmation
   if (msg.event === "subscribe") {
-    console.log(`OKX WS Worker: subscription confirmed for user ${userId}:`, msg.arg);
+    log.debug({ userId, arg: msg.arg }, "Subscription confirmed");
     return;
   }
 
@@ -300,9 +307,8 @@ async function onWsMessage(
 }
 
 function onWsClose(userId: string, code: number, reason: Buffer) {
-  console.warn(
-    `OKX WS Worker: WS CLOSED user=${userId} code=${code} reason=${reason.toString()}`,
-  );
+  log.warn({ userId, code, reason: reason.toString() }, "WebSocket closed");
+  wsConnectionsActive.dec({ exchange: "okx" });
 
   const state = connections.get(userId);
   if (!state) return;
@@ -317,7 +323,7 @@ function onWsClose(userId: string, code: number, reason: Buffer) {
   const delay = state.backoff;
   state.backoff = Math.min(state.backoff * 1.5, 60_000);
 
-  console.log(`OKX WS Worker: Reconnecting user ${userId} in ${delay}ms...`);
+  log.info({ userId, delay }, "Scheduling reconnect");
   setTimeout(() => ensureConnection(userId), delay);
 }
 
@@ -326,7 +332,7 @@ function onWsClose(userId: string, code: number, reason: Buffer) {
 // ------------------------------------------- //
 
 function closeConnection(userId: string) {
-  console.log(`OKX WS Worker: Closing WS for user ${userId}`);
+  log.info({ userId }, "Closing WebSocket connection");
 
   const st = connections.get(userId);
   if (!st) return;
@@ -344,14 +350,17 @@ function closeConnection(userId: string) {
 //             GRACEFUL SHUTDOWN
 // ------------------------------------------- //
 
-process.on("SIGINT", () => {
-  console.log("OKX WS Worker: shutting down...");
-
+async function shutdown() {
+  log.info("Shutting down");
   for (const [, st] of connections.entries()) {
     if (st.ws) st.ws.terminate();
   }
+  await flushLogger();
   process.exit(0);
-});
+}
+
+process.on("SIGINT", shutdown);
+process.on("SIGTERM", shutdown);
 
 // ------------------------------------------- //
 //          MESSAGE HANDLERS
@@ -362,7 +371,7 @@ async function handleOrderUpdate(userId: string, order: any) {
     const ordId = order.ordId;
     const state = order.state; // live, partially_filled, filled, canceled
 
-    console.log(`OKX WS Worker: ORDER UPDATE user=${userId} ordId=${ordId} state=${state} instId=${order.instId}`);
+    log.debug({ userId, ordId, state, instId: order.instId }, "Order update");
 
     let dbStatus: string | null = null;
     switch (state) {
@@ -379,7 +388,7 @@ async function handleOrderUpdate(userId: string, order: any) {
         dbStatus = "cancelled";
         break;
       default:
-        console.log(`OKX WS Worker: Unknown order state: ${state}`);
+        log.debug({ state }, "Unknown order state");
     }
 
     if (!dbStatus) return;
@@ -392,7 +401,7 @@ async function handleOrderUpdate(userId: string, order: any) {
       .limit(1);
 
     if (!trade) {
-      console.warn(`OKX WS Worker: Trade not found for ordId ${ordId}, skipping`);
+      log.warn({ ordId }, "Trade not found, skipping");
       return;
     }
 
@@ -412,12 +421,13 @@ async function handleOrderUpdate(userId: string, order: any) {
       .set(updateData)
       .where(eq(trades.id, trade.id));
 
-    console.log(`OKX WS Worker: Updated trade ${trade.id} to status: ${dbStatus}`);
+    log.info({ tradeId: trade.id, status: dbStatus }, "Trade updated");
 
     // Publish to Redis for UI
     await redis.publish(`user:${userId}:okx:orders:chan`, JSON.stringify(order));
   } catch (err) {
-    console.error(`OKX WS Worker: Error handling order update for user ${userId}:`, err);
+    log.error({ err, userId }, "Error handling order update");
+    exchangeErrorsTotal.inc({ exchange: "okx", component: "worker" });
   }
 }
 
@@ -425,10 +435,8 @@ async function handlePositionUpdate(userId: string, position: any) {
   try {
     const instId = position.instId;
     const pos = parseFloat(position.pos || "0");
-    const upl = position.upl; // unrealized PnL
-    const uplRatio = position.uplRatio;
 
-    console.log(`OKX WS Worker: POSITION UPDATE user=${userId} instId=${instId} pos=${pos} upl=${upl}`);
+    log.debug({ userId, instId, pos }, "Position update");
 
     // If position is closed (pos === 0), find and close matching trades
     if (pos === 0) {
@@ -438,7 +446,7 @@ async function handlePositionUpdate(userId: string, position: any) {
       });
 
       if (!exchange) {
-        console.warn(`OKX WS Worker: No exchange for user ${userId}`);
+        log.warn({ userId }, "No exchange found");
         return;
       }
 
@@ -465,14 +473,16 @@ async function handlePositionUpdate(userId: string, position: any) {
           })
           .where(eq(trades.id, trade.id));
 
-        console.log(`OKX WS Worker: Trade ${trade.id} (${instId}) closed via position update`);
+        log.info({ tradeId: trade.id, instId }, "Trade closed via position update");
+        tradesClosedTotal.inc({ exchange: "okx" });
       }
     }
 
     // Publish to Redis for UI
     await redis.publish(`user:${userId}:okx:positions:chan`, JSON.stringify(position));
   } catch (err) {
-    console.error(`OKX WS Worker: Error handling position update for user ${userId}:`, err);
+    log.error({ err, userId }, "Error handling position update");
+    exchangeErrorsTotal.inc({ exchange: "okx", component: "worker" });
   }
 }
 
@@ -488,14 +498,14 @@ async function reconcileSnapshot(
   userId: string,
   creds: { apiKey: string; apiSecret: string; passphrase: string },
 ) {
-  console.log(`[OKX Reconcile] Starting snapshot reconciliation for user ${userId}`);
+  log.info({ userId }, "Starting snapshot reconciliation");
 
   const exchange = await postgresDb.query.exchanges.findFirst({
     columns: { id: true },
     where: eq(exchanges.exchange_user_id, userId),
   });
   if (!exchange) {
-    console.warn(`[OKX Reconcile] No exchange record for exchange_user_id=${userId}`);
+    log.warn({ userId }, "No exchange record found for reconcile");
     return;
   }
 
@@ -510,13 +520,13 @@ async function reconcileSnapshot(
       ),
     );
 
-  console.log(`[OKX Reconcile] Found ${pendingTrades.length} pending trades to check`);
+  log.info({ userId, count: pendingTrades.length }, "Pending trades to reconcile");
 
   for (const trade of pendingTrades) {
     try {
       const orderData = await okxRestGetOrder(creds, trade.contract, trade.trade_id);
       if (!orderData || orderData.status === "error") {
-        console.warn(`[OKX Reconcile] Failed to fetch order ${trade.trade_id}:`, orderData);
+        log.warn({ tradeId: trade.trade_id }, "Failed to fetch order for reconcile");
         continue;
       }
 
@@ -525,7 +535,7 @@ async function reconcileSnapshot(
       if (!order) continue;
 
       const state = order.state;
-      console.log(`[OKX Reconcile] Order ${trade.trade_id} REST state: ${state}`);
+      log.debug({ tradeId: trade.trade_id, state }, "Order REST state");
 
       if (state === "filled") {
         await postgresDb
@@ -536,16 +546,17 @@ async function reconcileSnapshot(
             open_filled_at: order.fillTime ? Math.floor(Number(order.fillTime) / 1000) : undefined,
           })
           .where(eq(trades.id, trade.id));
-        console.log(`[OKX Reconcile] Trade ${trade.id} updated to waiting_targets`);
+        log.info({ tradeId: trade.id }, "Trade reconciled → waiting_targets");
       } else if (state === "canceled") {
         await postgresDb
           .update(trades)
           .set({ status: "cancelled", cancelled_at: new Date() })
           .where(eq(trades.id, trade.id));
-        console.log(`[OKX Reconcile] Trade ${trade.id} updated to cancelled`);
+        log.info({ tradeId: trade.id }, "Trade reconciled → cancelled");
       }
     } catch (err) {
-      console.error(`[OKX Reconcile] Error checking order ${trade.trade_id}:`, err);
+      log.error({ err, tradeId: trade.trade_id }, "Error checking order for reconcile");
+      exchangeErrorsTotal.inc({ exchange: "okx", component: "reconcile" });
     }
   }
 
@@ -561,13 +572,13 @@ async function reconcileSnapshot(
     );
 
   if (waitingTrades.length === 0) {
-    console.log(`[OKX Reconcile] No waiting_targets trades to check`);
+    log.debug({ userId }, "No waiting_targets trades to check");
     return;
   }
 
   const positionsData = await okxRestGetPositions(creds);
   if (!positionsData || positionsData.status === "error") {
-    console.warn(`[OKX Reconcile] Failed to fetch positions:`, positionsData);
+    log.warn({ userId }, "Failed to fetch positions for reconcile");
     return;
   }
 
@@ -579,11 +590,11 @@ async function reconcileSnapshot(
     }
   }
 
-  console.log(`[OKX Reconcile] Open position instruments: [${[...openPositionInstIds].join(", ")}]`);
+  log.debug({ userId, instruments: [...openPositionInstIds] }, "Open position instruments");
 
   for (const trade of waitingTrades) {
     if (!openPositionInstIds.has(trade.contract)) {
-      console.log(`[OKX Reconcile] Trade ${trade.id} (${trade.contract}) has no open position — marking closed`);
+      log.info({ tradeId: trade.id, contract: trade.contract }, "Trade has no open position — marking closed");
       await postgresDb
         .update(trades)
         .set({ status: "closed", closed_at: new Date() })
@@ -591,7 +602,7 @@ async function reconcileSnapshot(
     }
   }
 
-  console.log(`[OKX Reconcile] Snapshot reconciliation complete for user ${userId}`);
+  log.info({ userId }, "Snapshot reconciliation complete");
 }
 
 // ---- OKX REST helpers (avoids singleton OkxServices state issue) ----
@@ -642,4 +653,4 @@ async function okxRestGetPositions(
   return await response.json();
 }
 
-console.log("OKX Worker Runner started successfully");
+log.info("OKX Worker started successfully");

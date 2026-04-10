@@ -65,13 +65,14 @@ export interface OkxOrder {
   clOrdId?: string;
   tag?: string;
   side: string;
-  posSide: string;
+  posSide?: string; // Optional - only for futures/margin, not spot
   ordType: string;
   sz: string;
   px?: string;
   reduceOnly: boolean;
   attachAlgoOrds?: Array<any>;
   closeOrderAlgo?: Array<any>;
+  tgtCcy?: string; // Optional - for spot market orders to specify quote currency
 }
 export interface OkxCancelOrder {
   instId:string;

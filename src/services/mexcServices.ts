@@ -1,5 +1,8 @@
 import ccxt from 'ccxt';
 import type { MexcOrder } from '../schemas/interfaces';
+import { createLogger } from '../utils/logger';
+
+const log = createLogger({ exchange: 'mexc', process: 'service' });
 
 export const MexcServices = {
   exchange: null as ccxt.mexc | null,
@@ -27,7 +30,7 @@ export const MexcServices = {
     try {
       return await this.exchange.setLeverage(leverage, symbol);
     } catch (error: any) {
-      console.error("Error setting leverage:", error.message);
+      log.error({ err: error }, 'Error setting leverage:');
       return {
         status: "error",
         message: error.message,
@@ -45,7 +48,7 @@ export const MexcServices = {
       const result = await this.exchange.setMarginMode(marginMode, symbol);
       return result;
     } catch (error: any) {
-      console.error("Error setting margin mode:", error.message);
+      log.error({ err: error }, 'Error setting margin mode:');
       return {
         status: "error",
         message: error.message,
@@ -77,7 +80,7 @@ export const MexcServices = {
 
       return order;
     } catch (error: any) {
-      console.error("Error placing order:", error.message);
+      log.error({ err: error }, 'Error placing order:');
       throw error;
     }
   },
@@ -89,7 +92,7 @@ export const MexcServices = {
     try {
       return await this.exchange.cancelOrder(orderId, symbol);
     } catch (error: any) {
-      console.error("Error canceling order:", error.message);
+      log.error({ err: error }, 'Error canceling order:');
       return {
         status: "error",
         message: error.message,
@@ -105,7 +108,7 @@ export const MexcServices = {
     try {
       return await this.exchange.fetchBalance();
     } catch (error: any) {
-      console.error("Error fetching balance:", error.message);
+      log.error({ err: error }, 'Error fetching balance:');
       return {
         status: "error",
         message: error.message,
@@ -129,7 +132,7 @@ export const MexcServices = {
 
       throw new Error(`Unsupported method: ${method}`);
     } catch (error: any) {
-      console.error("Error in whitelisted request:", error.message);
+      log.error({ err: error }, 'Error in whitelisted request:');
       return {
         status: "error",
         message: error.message,

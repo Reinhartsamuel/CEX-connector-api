@@ -5,12 +5,16 @@ import type { Autotrader } from '../db/schema';
 import { and, eq } from 'drizzle-orm';
 import * as JSONbig from 'json-bigint';
 import redis from '../db/redis';
-import type { ExchangeExecutor, ExecutorContext, ExecutorResult } from './types';
+import type { ExchangeExecutor, ExecutorContext, ExecutorResult, SignalOverrides } from './types';
 import type { GateFuturesOrder, GateTriggerPriceOrder } from '../schemas/interfaces';
 import { getOrderType } from '../utils/getOrderType';
 import { getTriggerRule } from '../utils/getTriggerRule';
 import { mapPriceType } from '../utils/mapPriceType';
 import { waitForWsReady } from '../utils/wsReady';
+import { createLogger } from '../utils/logger';
+import { exchangeErrorsTotal } from '../utils/metrics';
+
+const log = createLogger({ exchange: 'gate', process: 'executor' });
 
 const REDIS_URL = process.env.REDIS_URL || 'redis://127.0.0.1:6379';
 
@@ -35,24 +39,15 @@ export const GateExecutor: ExchangeExecutor = {
   },
 };
 
-/**
- * Gate.io futures API requires underscore-separated symbols: BTC_USDT, not BTCUSDT.
- * Normalizes any common variant to that format.
- */
-function toGateContract(symbol: string): string {
-  // Already correct
-  if (symbol.includes('_')) return symbol.toUpperCase();
-  // BTCUSDT → BTC_USDT (matches USDT, USDC, BTC, ETH suffixes)
-  return symbol.replace(/(USDT|USDC|BTC|ETH|BNB)$/, '_$1').toUpperCase();
-}
-
 async function openPosition(ctx: ExecutorContext): Promise<ExecutorResult> {
   const { autotrader, action, exchange_user_id, overrides } = ctx;
 
-  const contract = toGateContract(autotrader.symbol);
+  // Symbol is already stored in exchange-native format (e.g., BTC_USDT)
+  const contract = autotrader.symbol;
   const leverage = autotrader.leverage;
   const leverage_type = (autotrader.leverage_type || 'ISOLATED') as 'ISOLATED' | 'CROSS';
   const position_type = action === 'BUY' ? 'long' : 'short';
+  const isFutures = autotrader.market === 'futures';
   const size = computeSize(autotrader, overrides);
 
   // Resolve order type and price from signal override, defaulting to market
@@ -101,7 +96,8 @@ async function openPosition(ctx: ExecutorContext): Promise<ExecutorResult> {
   // Gate returns an error-shaped object on failure instead of throwing
   if (!resPlaceOrder?.id) {
     const errMsg = resPlaceOrder?.message || resPlaceOrder?.label || JSON.stringify(resPlaceOrder);
-    console.error('[GateExecutor] placeFuturesOrder failed:', errMsg);
+    exchangeErrorsTotal.inc({ exchange: 'gate', component: 'executor' });
+    log.error({ errMsg }, 'placeFuturesOrder failed');
     return { success: false, error: `Gate order rejected: ${errMsg}` };
   }
 
@@ -201,7 +197,7 @@ async function openPosition(ctx: ExecutorContext): Promise<ExecutorResult> {
       metadata: JSON.parse(JSONbig.stringify(resPlaceOrder)),
     } as any);
   } catch (err) {
-    console.error('[GateExecutor] Failed to persist trade to DB:', err);
+    log.error({ err }, 'Failed to persist trade to DB');
   }
 
   return {
@@ -213,7 +209,8 @@ async function openPosition(ctx: ExecutorContext): Promise<ExecutorResult> {
 
 async function closePositionAtMarketPrice(ctx: ExecutorContext): Promise<ExecutorResult> {
   const { autotrader } = ctx;
-  const contract = toGateContract(autotrader.symbol);
+  // Symbol is already stored in exchange-native format
+  const contract = autotrader.symbol;
 
   // Find all open trades for this autotrader/contract
   const running_trades = await postgresDb.query.trades.findMany({
@@ -241,7 +238,8 @@ async function closePositionAtMarketPrice(ctx: ExecutorContext): Promise<Executo
 
       if (!res?.id) {
         const errMsg = res?.message || res?.label || JSON.stringify(res);
-        console.error('[GateExecutor] closePositionAtMarketPrice placeFuturesOrder failed:', errMsg);
+        exchangeErrorsTotal.inc({ exchange: 'gate', component: 'executor' });
+    log.error({ errMsg }, 'closePositionAtMarketPrice placeFuturesOrder failed');
       }
 
       return { trade, res };
@@ -276,29 +274,48 @@ async function closePositionAtMarketPrice(ctx: ExecutorContext): Promise<Executo
 }
 
 /**
- * Compute contract size (number of contracts) for Gate.io futures.
- * Formula: floor((capital * leverage) / (price * contract_value_multiplier))
- * - capital = initial_investment (USDT margin allocated)
- * - price = market_price from signal (current mark/last price sent by TradingView)
- * - contract_value_multiplier = quanto_multiplier from Gate contract spec (coins per contract)
- * Errors loudly if either required field is missing — never silently falls back to wrong sizing.
+ * Compute order size for Gate.io instruments.
+ * 
+ * For FUTURES:
+ *   - Returns NUMBER OF CONTRACTS
+ *   - Formula: floor((capital * leverage) / (price * contract_value_multiplier))
+ *   - contract_value_multiplier = quanto_multiplier from Gate (base asset per contract)
+ * 
+ * For SPOT:
+ *   - Returns COIN AMOUNT (base currency quantity)
+ *   - Formula: (capital * leverage) / price
+ *   - No multiplier needed (Gate spot orders use coin amount directly)
+ * 
+ * @param autotrader - Autotrader config with market type and multiplier
+ * @param overrides - Signal overrides including price
+ * @returns Size to use in Gate order (contracts for futures, coin amount for spot)
  */
-function computeSize(autotrader: Autotrader, overrides: import('./types').SignalOverrides): number {
+function computeSize(autotrader: Autotrader, overrides: SignalOverrides): number {
+  const { market } = autotrader;
   const multiplier = autotrader.contract_value_multiplier;
-  if (!multiplier || Number(multiplier) <= 0) {
-    throw new Error(
-      `[GateExecutor] contract_value_multiplier is not set on autotrader ${autotrader.id} (${autotrader.symbol}). ` +
-      `Set it to the Gate quanto_multiplier for this contract before trading.`
-    );
-  }
   const price = overrides.order_type === 'limit' ? overrides.price : overrides.market_price;
+  const capital = Number(autotrader.initial_investment);
+  const leverage = autotrader.leverage ?? 1;
+
   if (!price || price <= 0) {
     throw new Error(
       `[GateExecutor] price is required for contract sizing. ` +
       `For market orders send market_price in the signal payload; for limit orders send price.`
     );
   }
-  const capital = Number(autotrader.initial_investment);
-  const leverage = autotrader.leverage;
-  return Math.floor((capital * leverage) / (price * Number(multiplier)));
+
+  if (market === 'futures') {
+    if (!multiplier || Number(multiplier) <= 0) {
+      throw new Error(
+        `[GateExecutor] contract_value_multiplier is not set on autotrader ${autotrader.id} (${autotrader.symbol}). ` +
+        `Ensure the autotrader was created with a valid multiplier from Gate /contracts API.`
+      );
+    }
+    // FUTURES: return NUMBER OF CONTRACTS
+    return Math.floor((capital * leverage) / (price * Number(multiplier)));
+  }
+
+  // SPOT: return COIN AMOUNT (base currency quantity)
+  // No multiplier needed - Gate spot orders use coin amount directly
+  return (capital * leverage) / price;
 }

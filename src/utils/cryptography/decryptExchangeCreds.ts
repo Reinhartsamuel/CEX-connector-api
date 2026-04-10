@@ -3,6 +3,9 @@ import { postgresDb } from "../../db/client";
 import { exchanges } from "../../db/schema";
 import { eq } from "drizzle-orm";
 import { kmsClient, decrypt } from "./kmsUtils";
+import { createLogger } from "../logger";
+
+const log = createLogger({ process: 'kms', component: 'decrypt-creds' });
 
 export interface DecryptedCreds {
   apiKey: string;
@@ -25,7 +28,7 @@ export async function decryptExchangeCreds(
   });
 
   if (!exchange || !exchange.enc_dek) {
-    console.warn(`[decryptExchangeCreds] No exchange or enc_dek for exchange_user_id=${exchangeUserId}`);
+    log.warn({ exchangeUserId }, 'No exchange or enc_dek found');
     return null;
   }
 
@@ -39,7 +42,7 @@ export async function decryptExchangeCreds(
     );
 
     if (!dekResp.Plaintext) {
-      console.error(`[decryptExchangeCreds] KMS decrypt returned no plaintext for exchange_user_id=${exchangeUserId}`);
+      log.error({ exchangeUserId }, 'KMS decrypt returned no plaintext');
       return null;
     }
 
@@ -53,7 +56,7 @@ export async function decryptExchangeCreds(
 
     return { apiKey, apiSecret, passphrase, exchangeId: exchange.id };
   } catch (err) {
-    console.error(`[decryptExchangeCreds] Failed for exchange_user_id=${exchangeUserId}:`, err);
+    log.error({ err, exchangeUserId }, 'Credential decryption failed');
     return null;
   } finally {
     if (plaintextDEK) plaintextDEK.fill(0);

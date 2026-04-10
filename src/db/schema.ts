@@ -57,7 +57,7 @@ export const exchanges = pgTable('exchanges', {
 }, (table) => {
   return {
     // unique_user_exchange: unique().on(table.user_id, table.exchange_title),
-    unique_user_exchange_id: unique().on(table.exchange_user_id),
+    // unique_user_exchange_id: unique().on(table.exchange_user_id), // this is deleted because it has duplicate on line 40 above
   };
 });
 
@@ -149,7 +149,7 @@ export const trading_plan_pairs = pgTable('trading_plan_pairs', {
   trading_plan_id: integer('trading_plan_id').notNull().references(() => trading_plans.id, { onDelete: 'cascade' }),
   base_asset: text('base_asset').notNull(),
   quote_asset: text('quote_asset').notNull(),
-  symbol: text('symbol').notNull(),
+  symbol: text('symbol').notNull(), // this will look like BTCUSDT, DOGEUSDT, XRPUSDT, etc
 }, (table) => {
   return {
     idx_symbol: index().on(table.symbol),

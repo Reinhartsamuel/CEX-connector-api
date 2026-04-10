@@ -3,6 +3,9 @@ import { postgresDb } from "../db/client";
 import { trading_plans, trading_plan_pairs, users } from "../db/schema";
 import { and, eq, desc, asc, inArray, sql } from "drizzle-orm";
 import {
+import { createLogger } from '../../utils/logger';
+
+const log = createLogger({ exchange: 'api', process: 'trading-plan-handler' });
   createTradingPlanSchema,
   updateTradingPlanSchema,
   queryTradingPlanSchema,
@@ -57,7 +60,7 @@ export const TradingPlanHandler = {
         201
       );
     } catch (error: any) {
-      console.error("Error creating trading plan:", error);
+      log.error({ err: error }, 'Error creating trading plan:');
 
       if (error.name === "ZodError") {
         return c.json(
@@ -115,7 +118,7 @@ export const TradingPlanHandler = {
         data: tradingPlan[0],
       });
     } catch (error: any) {
-      console.error("Error getting trading plan:", error);
+      log.error({ err: error }, 'Error getting trading plan:');
       return c.json(
         {
           message: "Failed to retrieve trading plan",
@@ -187,7 +190,7 @@ export const TradingPlanHandler = {
         },
       });
     } catch (error: any) {
-      console.error("Error querying trading plans:", error);
+      log.error({ err: error }, 'Error querying trading plans:');
 
       if (error.name === "ZodError") {
         return c.json(
@@ -277,7 +280,7 @@ export const TradingPlanHandler = {
         data: updatedTradingPlan,
       });
     } catch (error: any) {
-      console.error("Error updating trading plan:", error);
+      log.error({ err: error }, 'Error updating trading plan:');
 
       if (error.name === "ZodError") {
         return c.json(
@@ -341,7 +344,7 @@ export const TradingPlanHandler = {
         data: { id },
       });
     } catch (error: any) {
-      console.error("Error deleting trading plan:", error);
+      log.error({ err: error }, 'Error deleting trading plan:');
       return c.json(
         {
           message: "Failed to delete trading plan",
@@ -401,7 +404,7 @@ export const TradingPlanHandler = {
         data: updatedTradingPlan,
       });
     } catch (error: any) {
-      console.error("Error updating trading plan status:", error);
+      log.error({ err: error }, 'Error updating trading plan status:');
 
       if (error.name === "ZodError") {
         return c.json(
@@ -472,7 +475,7 @@ export const TradingPlanHandler = {
         data: updatedTradingPlan,
       });
     } catch (error: any) {
-      console.error("Error updating trading plan visibility:", error);
+      log.error({ err: error }, 'Error updating trading plan visibility:');
 
       if (error.name === "ZodError") {
         return c.json(
@@ -545,7 +548,7 @@ export const TradingPlanHandler = {
         data: updatedTradingPlan,
       });
     } catch (error: any) {
-      console.error("Error updating trading plan metrics:", error);
+      log.error({ err: error }, 'Error updating trading plan metrics:');
 
       if (error.name === "ZodError") {
         return c.json(
@@ -616,7 +619,7 @@ export const TradingPlanHandler = {
         data: updatedTradingPlan,
       });
     } catch (error: any) {
-      console.error("Error updating trading plan followers:", error);
+      log.error({ err: error }, 'Error updating trading plan followers:');
 
       if (error.name === "ZodError") {
         return c.json(
@@ -689,7 +692,7 @@ export const TradingPlanHandler = {
         201
       );
     } catch (error: any) {
-      console.error("Error batch creating trading plans:", error);
+      log.error({ err: error }, 'Error batch creating trading plans:');
 
       if (error.name === "ZodError") {
         return c.json(
@@ -798,7 +801,7 @@ export const TradingPlanHandler = {
         data: stats,
       });
     } catch (error: any) {
-      console.error("Error getting trading plan statistics:", error);
+      log.error({ err: error }, 'Error getting trading plan statistics:');
       return c.json(
         {
           message: "Failed to retrieve trading plan statistics",
@@ -870,7 +873,7 @@ export const TradingPlanHandler = {
         201
       );
     } catch (error: any) {
-      console.error("Error creating trading plan pair:", error);
+      log.error({ err: error }, 'Error creating trading plan pair:');
 
       if (error.name === "ZodError") {
         return c.json(
@@ -928,7 +931,7 @@ export const TradingPlanHandler = {
         data: pair[0],
       });
     } catch (error: any) {
-      console.error("Error getting trading plan pair:", error);
+      log.error({ err: error }, 'Error getting trading plan pair:');
       return c.json(
         {
           message: "Failed to retrieve trading plan pair",
@@ -993,7 +996,7 @@ export const TradingPlanHandler = {
         },
       });
     } catch (error: any) {
-      console.error("Error querying trading plan pairs:", error);
+      log.error({ err: error }, 'Error querying trading plan pairs:');
 
       if (error.name === "ZodError") {
         return c.json(
@@ -1115,7 +1118,7 @@ export const TradingPlanHandler = {
         data: updatedPair,
       });
     } catch (error: any) {
-      console.error("Error updating trading plan pair:", error);
+      log.error({ err: error }, 'Error updating trading plan pair:');
 
       if (error.name === "ZodError") {
         return c.json(
@@ -1179,7 +1182,7 @@ export const TradingPlanHandler = {
         data: { id },
       });
     } catch (error: any) {
-      console.error("Error deleting trading plan pair:", error);
+      log.error({ err: error }, 'Error deleting trading plan pair:');
       return c.json(
         {
           message: "Failed to delete trading plan pair",
@@ -1295,7 +1298,7 @@ export const TradingPlanHandler = {
         201
       );
     } catch (error: any) {
-      console.error("Error batch creating trading plan pairs:", error);
+      log.error({ err: error }, 'Error batch creating trading plan pairs:');
 
       if (error.name === "ZodError") {
         return c.json(
@@ -1412,7 +1415,7 @@ export const TradingPlanHandler = {
         },
       });
     } catch (error: any) {
-      console.error("Error getting trading plan pairs:", error);
+      log.error({ err: error }, 'Error getting trading plan pairs:');
       return c.json(
         {
           message: "Failed to retrieve trading plan pairs",
@@ -1471,7 +1474,7 @@ export const TradingPlanHandler = {
         },
       });
     } catch (error: any) {
-      console.error("Error getting trading plan with pairs:", error);
+      log.error({ err: error }, 'Error getting trading plan with pairs:');
       return c.json(
         {
           message: "Failed to retrieve trading plan with pairs",

@@ -14,6 +14,9 @@ import {
   getOrDecryptDEK,
 } from "../../utils/cryptography/kmsUtils";
 import {
+import { createLogger } from '../../utils/logger';
+
+const log = createLogger({ exchange: 'mexc', process: 'handler' });
   mexcRegisterUserSchema,
   mexcPlaceOrderSchema,
   mexcCancelOrderSchema,
@@ -138,7 +141,7 @@ export const MexcHandler = {
         exchangeRecord,
       });
     } catch (e) {
-      console.error(e, "ERROR 500 REGISTER USER mexc");
+      log.error({ err: e }, 'ERROR 500 REGISTER USER mexc');
       if (e instanceof Error) {
         return c.json(
           {
@@ -257,7 +260,7 @@ export const MexcHandler = {
 
       return c.json(allReturn);
     } catch (e) {
-      console.error(e, "ERROR 500 ORDER mexc");
+      log.error({ err: e }, 'ERROR 500 ORDER mexc');
 
       // Clear credentials on error
       MexcServices.clearCredentials();
@@ -320,7 +323,7 @@ export const MexcHandler = {
               .set({ status: 'cancelled' })
               .where(eq(trades.id, result.value.id));
           } else {
-            console.log(`Canceling status: ${result.status} failed!!!`);
+            log.info({}, 'Canceling status: ${result.status} failed!!!');
           }
         })
       );
@@ -329,7 +332,7 @@ export const MexcHandler = {
 
       return c.json(results);
     } catch (e) {
-      console.error(e, "ERROR 500 CANCEL ORDER mexc");
+      log.error({ err: e }, 'ERROR 500 CANCEL ORDER mexc');
       MexcServices.clearCredentials();
 
       if (e instanceof Error) {
@@ -410,7 +413,7 @@ export const MexcHandler = {
         closed_trades,
       });
     } catch (e) {
-      console.error(e, "ERROR 500 CLOSE POSITION mexc");
+      log.error({ err: e }, 'ERROR 500 CLOSE POSITION mexc');
       MexcServices.clearCredentials();
 
       if (e instanceof Error) {
@@ -452,7 +455,7 @@ export const MexcHandler = {
 
       return c.json(result);
     } catch (e) {
-      console.error(e, "ERROR 500 PLAYGROUND mexc");
+      log.error({ err: e }, 'ERROR 500 PLAYGROUND mexc');
       MexcServices.clearCredentials();
 
       if (e instanceof Error) {

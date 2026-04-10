@@ -3,6 +3,9 @@ import { postgresDb } from "../db/client";
 import { autotraders, exchanges, users, trading_plans } from "../db/schema";
 import { and, eq, desc, asc, like, inArray, sql } from "drizzle-orm";
 import {
+import { createLogger } from '../../utils/logger';
+
+const log = createLogger({ exchange: 'api', process: 'autotrader-handler' });
   createAutotraderSchema,
   updateAutotraderSchema,
   queryAutotraderSchema,
@@ -125,7 +128,7 @@ export const AutotraderHandler = {
         201
       );
     } catch (error: any) {
-      console.error("Error creating autotrader:", error);
+      log.error({ err: error }, 'Error creating autotrader:');
 
       if (error.name === "ZodError") {
         return c.json(
@@ -183,7 +186,7 @@ export const AutotraderHandler = {
         data: autotrader[0],
       });
     } catch (error: any) {
-      console.error("Error getting autotrader:", error);
+      log.error({ err: error }, 'Error getting autotrader:');
       return c.json(
         {
           message: "Failed to retrieve autotrader",
@@ -261,7 +264,7 @@ export const AutotraderHandler = {
         },
       });
     } catch (error: any) {
-      console.error("Error querying autotraders:", error);
+      log.error({ err: error }, 'Error querying autotraders:');
 
       if (error.name === "ZodError") {
         return c.json(
@@ -435,7 +438,7 @@ export const AutotraderHandler = {
         data: updatedAutotrader,
       });
     } catch (error: any) {
-      console.error("Error updating autotrader:", error);
+      log.error({ err: error }, 'Error updating autotrader:');
 
       if (error.name === "ZodError") {
         return c.json(
@@ -499,7 +502,7 @@ export const AutotraderHandler = {
         data: { id },
       });
     } catch (error: any) {
-      console.error("Error deleting autotrader:", error);
+      log.error({ err: error }, 'Error deleting autotrader:');
       return c.json(
         {
           message: "Failed to delete autotrader",
@@ -560,7 +563,7 @@ export const AutotraderHandler = {
         data: updatedAutotrader,
       });
     } catch (error: any) {
-      console.error("Error updating autotrader status:", error);
+      log.error({ err: error }, 'Error updating autotrader status:');
 
       if (error.name === "ZodError") {
         return c.json(
@@ -632,7 +635,7 @@ export const AutotraderHandler = {
         data: updatedAutotrader,
       });
     } catch (error: any) {
-      console.error("Error updating autotrader balance:", error);
+      log.error({ err: error }, 'Error updating autotrader balance:');
 
       if (error.name === "ZodError") {
         return c.json(
@@ -758,7 +761,7 @@ export const AutotraderHandler = {
         201
       );
     } catch (error: any) {
-      console.error("Error batch creating autotraders:", error);
+      log.error({ err: error }, 'Error batch creating autotraders:');
 
       if (error.name === "ZodError") {
         return c.json(
@@ -844,7 +847,7 @@ export const AutotraderHandler = {
         data: stats,
       });
     } catch (error: any) {
-      console.error("Error getting autotrader statistics:", error);
+      log.error({ err: error }, 'Error getting autotrader statistics:');
       return c.json(
         {
           message: "Failed to retrieve autotrader statistics",

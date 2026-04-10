@@ -1,6 +1,9 @@
 import ccxt from 'ccxt';
 import type { TokocryptoOrder } from '../schemas/interfaces';
 import * as JSONbig from "json-bigint";
+import { createLogger } from '../utils/logger';
+
+const log = createLogger({ exchange: 'tokocrypto', process: 'service' });
 
 export const TokocryptoServices = {
   exchange: null as ccxt.tokocrypto | null,
@@ -34,7 +37,7 @@ export const TokocryptoServices = {
       });
       return result;
     } catch (error: any) {
-      console.error("Error setting position mode:", error.message);
+      log.error({ err: error }, 'Error setting position mode:');
       return {
         status: "error",
         message: error.message,
@@ -52,7 +55,7 @@ export const TokocryptoServices = {
       // CCXT unified method for setting leverage
       return await this.exchange.setLeverage(leverage, symbol);
     } catch (error: any) {
-      console.error("Error setting leverage:", error.message);
+      log.error({ err: error }, 'Error setting leverage:');
       return {
         status: "error",
         message: error.message,
@@ -71,7 +74,7 @@ export const TokocryptoServices = {
       const result = await this.exchange.setMarginMode(marginMode, symbol);
       return result;
     } catch (error: any) {
-      console.error("Error setting margin mode:", error.message);
+      log.error({ err: error }, 'Error setting margin mode:');
       return {
         status: "error",
         message: error.message,
@@ -118,7 +121,7 @@ export const TokocryptoServices = {
 
       return order;
     } catch (error: any) {
-      console.error("Error placing order:", error.message);
+      log.error({ err: error }, 'Error placing order:');
       throw error;
     }
   },
@@ -130,7 +133,7 @@ export const TokocryptoServices = {
     try {
       return await this.exchange.cancelOrder(orderId, symbol);
     } catch (error: any) {
-      console.error("Error canceling order:", error.message);
+      log.error({ err: error }, 'Error canceling order:');
       return {
         status: "error",
         message: error.message,
@@ -146,7 +149,7 @@ export const TokocryptoServices = {
     try {
       return await this.exchange.fetchBalance();
     } catch (error: any) {
-      console.error("Error fetching balance:", error.message);
+      log.error({ err: error }, 'Error fetching balance:');
       return {
         status: "error",
         message: error.message,
@@ -171,7 +174,7 @@ export const TokocryptoServices = {
 
       throw new Error(`Unsupported method: ${method}`);
     } catch (error: any) {
-      console.error("Error in whitelisted request:", error.message);
+      log.error({ err: error }, 'Error in whitelisted request:');
       return {
         status: "error",
         message: error.message,

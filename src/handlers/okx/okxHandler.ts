@@ -30,6 +30,9 @@ import {
   getOrDecryptDEK,
 } from "../../utils/cryptography/kmsUtils";
 import { okxCancelOrderSchema, okxRegisterUserSchema } from "../../schemas/okxSchemas";
+import { createLogger } from '../../utils/logger';
+
+const log = createLogger({ exchange: 'okx', process: 'handler' });
 
 export const OkxHandler = {
   /**
@@ -116,7 +119,7 @@ export const OkxHandler = {
           { status: reqAccount.statusCode },
         );
       const account = reqAccount?.data[0];
-      console.log(account, "account");
+      log.debug({ data: account }, 'account');
 
       const permissions = account?.perm ? account.perm?.split(",") : [];
       if (!permissions.includes("trade"))
@@ -196,7 +199,7 @@ export const OkxHandler = {
         exchangeRecord,
       });
     } catch (e) {
-      console.error(e, "ERROR 500 REGISTER USER okxServices");
+      log.error({ err: e }, 'ERROR 500 REGISTER USER okxServices');
       if (e instanceof Error) {
         return c.json(
           {
@@ -352,7 +355,7 @@ export const OkxHandler = {
 
         metadata: JSON.parse(JSONbig.stringify(resPlaceOrder)),
       };
-      console.log(JSON.stringify(addData),'addData')
+      log.debug({ data: addData }, 'addData');
       const newTrade = await postgresDb
         .insert(trades)
         .values(addData as any)
@@ -438,7 +441,7 @@ export const OkxHandler = {
             .set({ status: 'cancelled' })
             .where(eq(result.value.id, result.value.id));
         } else {
-          console.log(`${JSON.stringify(result)}, cancelling status: ${result.status} failed!!!❌🅾❌`)
+          log.info({}, '${JSON.stringify(result)}, cancelling status: ${result.status} failed!!!❌🅾❌')
         }
       })
     )
@@ -508,7 +511,7 @@ export const OkxHandler = {
       // const res = await GateServices.closeFuturesOrder(body);
       // return c.json(res);
     } catch (e) {
-      console.error(e, "ERROR 500 CLOSE POSITION");
+      log.error({ err: e }, 'ERROR 500 CLOSE POSITION');
       if (e instanceof Error) {
         return c.json(
           {
@@ -549,7 +552,7 @@ export const OkxHandler = {
 
       return c.json(res);
     } catch (e) {
-      console.error(e, "ERROR 500 GET ORDER DETAILS");
+      log.error({ err: e }, 'ERROR 500 GET ORDER DETAILS');
       if (e instanceof Error) {
         return c.json(
           {

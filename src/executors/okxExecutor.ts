@@ -4,9 +4,13 @@ import { trades } from '../db/schema';
 import { and, eq } from 'drizzle-orm';
 import * as JSONbig from 'json-bigint';
 import redis from '../db/redis';
-import type { ExchangeExecutor, ExecutorContext, ExecutorResult } from './types';
+import type { ExchangeExecutor, ExecutorContext, ExecutorResult, SignalOverrides } from './types';
 import type { OkxOrder } from '../schemas/interfaces';
 import type { Autotrader } from '../db/schema';
+import { createLogger } from '../utils/logger';
+import { exchangeErrorsTotal } from '../utils/metrics';
+
+const log = createLogger({ exchange: 'okx', process: 'executor' });
 
 export const OkxExecutor: ExchangeExecutor = {
   async execute(ctx: ExecutorContext): Promise<ExecutorResult> {
@@ -28,22 +32,15 @@ export const OkxExecutor: ExchangeExecutor = {
   },
 };
 
-/**
- * OKX SWAP instruments use the format: BTC-USDT-SWAP
- */
-function toOkxInstId(symbol: string): string {
-  if (symbol.endsWith('-SWAP')) return symbol.toUpperCase();
-  if (symbol.includes('_')) return symbol.replace('_', '-').toUpperCase() + '-SWAP';
-  return symbol.replace(/(USDT|USDC|BTC|ETH|BNB)$/, '-$1').toUpperCase() + '-SWAP';
-}
-
 async function openPosition(ctx: ExecutorContext): Promise<ExecutorResult> {
   const { autotrader, action, exchange_user_id, overrides } = ctx;
 
-  const instId = toOkxInstId(autotrader.symbol);
+  // Symbol is already stored in exchange-native format (e.g., BTC-USDT-SWAP or BTC-USDT)
+  const instId = autotrader.symbol;
   const leverage = autotrader.leverage;
   const leverage_type = (autotrader.leverage_type || 'ISOLATED') as 'ISOLATED' | 'CROSS';
   const position_type = action === 'BUY' ? 'long' : 'short';
+  const isFutures = autotrader.market === 'futures';
   const size = computeSize(autotrader, overrides);
   const order_type = overrides.order_type ?? 'market';
   const isMarket = order_type === 'market';
@@ -55,19 +52,27 @@ async function openPosition(ctx: ExecutorContext): Promise<ExecutorResult> {
     'contract', instId,
   );
 
+  // Build order payload with market-type aware fields
   const orderPayload: OkxOrder = {
     instId,
-    tdMode: leverage_type.toLowerCase(), // 'isolated' or 'cross'
+    tdMode: isFutures ? leverage_type.toLowerCase() : 'cash', // 'cash' for spot, 'isolated'/'cross' for futures
     side: position_type === 'long' ? 'buy' : 'sell',
-    posSide: position_type,
     ordType: order_type,
     sz: String(size),
     reduceOnly: false,
   };
 
+  // posSide only for futures/margin (not spot)
+  if (isFutures) {
+    orderPayload.posSide = position_type;
+  }
+
   if (!isMarket && overrides.price) {
     orderPayload.px = String(overrides.price);
   }
+
+  // Spot market buy special case: spend exact USDT amount using tgtCcy
+  // Note: This would require a new field in SignalOverrides if needed in future
 
   // OKX supports inline TP/SL via attachAlgoOrds — both can share one object
   const algoOrd: Record<string, string> = {};
@@ -89,7 +94,8 @@ async function openPosition(ctx: ExecutorContext): Promise<ExecutorResult> {
 
   if (res?.code !== '0' || !res?.data?.[0] || res.data[0].sCode !== '0') {
     const errMsg = res?.data?.[0]?.sMsg || res?.msg || JSON.stringify(res);
-    console.error('[OkxExecutor] placeOrder failed:', errMsg);
+    exchangeErrorsTotal.inc({ exchange: 'okx', component: 'executor' });
+    log.error({ errMsg }, 'placeOrder failed');
     return { success: false, error: `OKX order rejected: ${errMsg}` };
   }
 
@@ -124,7 +130,7 @@ async function openPosition(ctx: ExecutorContext): Promise<ExecutorResult> {
       metadata: JSON.parse(JSONbig.stringify(res)),
     } as any);
   } catch (err) {
-    console.error('[OkxExecutor] Failed to persist trade to DB:', err);
+    log.error({ err }, 'Failed to persist trade to DB');
   }
 
   return {
@@ -136,7 +142,8 @@ async function openPosition(ctx: ExecutorContext): Promise<ExecutorResult> {
 
 async function closePosition(ctx: ExecutorContext): Promise<ExecutorResult> {
   const { autotrader } = ctx;
-  const instId = toOkxInstId(autotrader.symbol);
+  // Symbol is already stored in exchange-native format
+  const instId = autotrader.symbol;
 
   const running_trades = await postgresDb.query.trades.findMany({
     where: and(
@@ -161,7 +168,8 @@ async function closePosition(ctx: ExecutorContext): Promise<ExecutorResult> {
       const res = await OkxServices.placeOrder(closePayload);
       if (res?.code !== '0' || res?.data?.[0]?.sCode !== '0') {
         const errMsg = res?.data?.[0]?.sMsg || res?.msg || JSON.stringify(res);
-        console.error('[OkxExecutor] closePosition failed:', errMsg);
+        exchangeErrorsTotal.inc({ exchange: 'okx', component: 'executor' });
+        log.error({ errMsg }, 'closePosition failed');
       }
       return { trade, res };
     }),
@@ -192,29 +200,48 @@ async function closePosition(ctx: ExecutorContext): Promise<ExecutorResult> {
 
 
 /**
- * Compute contract size (number of contracts) for OKX SWAP instruments.
- * Formula: floor((capital * leverage) / (price * contract_value_multiplier))
- * - capital = initial_investment (USDT margin allocated)
- * - price = market_price from signal (current price sent by TradingView)
- * - contract_value_multiplier = ctVal from OKX instrument spec (base asset per contract)
- * Errors loudly if either required field is missing — never silently falls back to wrong sizing.
+ * Compute order size for OKX instruments.
+ * 
+ * For FUTURES/SWAP:
+ *   - Returns NUMBER OF CONTRACTS
+ *   - Formula: floor((capital * leverage) / (price * contract_value_multiplier))
+ *   - contract_value_multiplier = ctVal from OKX (base asset per contract)
+ * 
+ * For SPOT:
+ *   - Returns COIN AMOUNT (base currency quantity)
+ *   - Formula: (capital * leverage) / price
+ *   - No multiplier needed (sz = coin amount directly)
+ * 
+ * @param autotrader - Autotrader config with market type and multiplier
+ * @param overrides - Signal overrides including price
+ * @returns Size to use in OKX order (contracts for futures, coin amount for spot)
  */
-function computeSize(autotrader: Autotrader, overrides: import('./types').SignalOverrides): number {
+function computeSize(autotrader: Autotrader, overrides: SignalOverrides): number {
+  const { market } = autotrader;
   const multiplier = autotrader.contract_value_multiplier;
-  if (!multiplier || Number(multiplier) <= 0) {
-    throw new Error(
-      `[OkxExecutor] contract_value_multiplier is not set on autotrader ${autotrader.id} (${autotrader.symbol}). ` +
-      `Set it to the OKX ctVal for this instrument before trading.`
-    );
-  }
   const price = overrides.order_type === 'limit' ? overrides.price : overrides.market_price;
+  const capital = Number(autotrader.initial_investment);
+  const leverage = autotrader.leverage ?? 1;
+
   if (!price || price <= 0) {
     throw new Error(
       `[OkxExecutor] price is required for contract sizing. ` +
       `For market orders send market_price in the signal payload; for limit orders send price.`
     );
   }
-  const capital = Number(autotrader.initial_investment);
-  const leverage = autotrader.leverage;
-  return Math.floor((capital * leverage) / (price * Number(multiplier)));
+
+  if (market === 'futures') {
+    if (!multiplier || Number(multiplier) <= 0) {
+      throw new Error(
+        `[OkxExecutor] contract_value_multiplier is not set on autotrader ${autotrader.id} (${autotrader.symbol}). ` +
+        `Ensure the autotrader was created with a valid multiplier from OKX /instruments API.`
+      );
+    }
+    // FUTURES: return NUMBER OF CONTRACTS
+    return Math.floor((capital * leverage) / (price * Number(multiplier)));
+  }
+
+  // SPOT: return COIN AMOUNT (base currency quantity)
+  // No multiplier needed - OKX spot orders use coin amount directly in sz field
+  return (capital * leverage) / price;
 }

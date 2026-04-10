@@ -14,6 +14,9 @@ import {
   getOrDecryptDEK,
 } from "../../utils/cryptography/kmsUtils";
 import {
+import { createLogger } from '../../utils/logger';
+
+const log = createLogger({ exchange: 'bitget', process: 'handler' });
   bitgetRegisterUserSchema,
   bitgetPlaceOrderSchema,
   bitgetCancelOrderSchema,
@@ -146,7 +149,7 @@ export const BitgetHandler = {
         exchangeRecord,
       });
     } catch (e) {
-      console.error(e, "ERROR 500 REGISTER USER bitget");
+      log.error({ err: e }, 'ERROR 500 REGISTER USER bitget');
       if (e instanceof Error) {
         return c.json(
           {
@@ -267,7 +270,7 @@ export const BitgetHandler = {
 
       return c.json(allReturn);
     } catch (e) {
-      console.error(e, "ERROR 500 ORDER bitget");
+      log.error({ err: e }, 'ERROR 500 ORDER bitget');
 
       // Clear credentials on error
       BitgetServices.clearCredentials();
@@ -331,7 +334,7 @@ export const BitgetHandler = {
               .set({ status: 'cancelled' })
               .where(eq(trades.id, result.value.id));
           } else {
-            console.log(`Canceling status: ${result.status} failed!!!`);
+            log.info({}, 'Canceling status: ${result.status} failed!!!');
           }
         })
       );
@@ -340,7 +343,7 @@ export const BitgetHandler = {
 
       return c.json(results);
     } catch (e) {
-      console.error(e, "ERROR 500 CANCEL ORDER bitget");
+      log.error({ err: e }, 'ERROR 500 CANCEL ORDER bitget');
       BitgetServices.clearCredentials();
 
       if (e instanceof Error) {
@@ -421,7 +424,7 @@ export const BitgetHandler = {
         closed_trades,
       });
     } catch (e) {
-      console.error(e, "ERROR 500 CLOSE POSITION bitget");
+      log.error({ err: e }, 'ERROR 500 CLOSE POSITION bitget');
       BitgetServices.clearCredentials();
 
       if (e instanceof Error) {
@@ -463,7 +466,7 @@ export const BitgetHandler = {
 
       return c.json(result);
     } catch (e) {
-      console.error(e, "ERROR 500 PLAYGROUND bitget");
+      log.error({ err: e }, 'ERROR 500 PLAYGROUND bitget');
       BitgetServices.clearCredentials();
 
       if (e instanceof Error) {

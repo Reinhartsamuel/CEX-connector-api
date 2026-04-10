@@ -1,5 +1,8 @@
 import ccxt from 'ccxt';
 import type { BitmartOrder } from '../schemas/interfaces';
+import { createLogger } from '../utils/logger';
+
+const log = createLogger({ exchange: 'bitmart', process: 'service' });
 
 export const BitmartServices = {
   exchange: null as ccxt.bitmart | null,
@@ -28,7 +31,7 @@ export const BitmartServices = {
     try {
       return await this.exchange.setLeverage(leverage, symbol);
     } catch (error: any) {
-      console.error("Error setting leverage:", error.message);
+      log.error({ err: error }, 'Error setting leverage:');
       return {
         status: "error",
         message: error.message,
@@ -62,7 +65,7 @@ export const BitmartServices = {
 
       return order;
     } catch (error: any) {
-      console.error("Error placing order:", error.message);
+      log.error({ err: error }, 'Error placing order:');
       throw error;
     }
   },
@@ -74,7 +77,7 @@ export const BitmartServices = {
     try {
       return await this.exchange.cancelOrder(orderId, symbol);
     } catch (error: any) {
-      console.error("Error canceling order:", error.message);
+      log.error({ err: error }, 'Error canceling order:');
       return {
         status: "error",
         message: error.message,
@@ -90,7 +93,7 @@ export const BitmartServices = {
     try {
       return await this.exchange.fetchBalance();
     } catch (error: any) {
-      console.error("Error fetching balance:", error.message);
+      log.error({ err: error }, 'Error fetching balance:');
       return {
         status: "error",
         message: error.message,
@@ -114,7 +117,7 @@ export const BitmartServices = {
 
       throw new Error(`Unsupported method: ${method}`);
     } catch (error: any) {
-      console.error("Error in whitelisted request:", error.message);
+      log.error({ err: error }, 'Error in whitelisted request:');
       return {
         status: "error",
         message: error.message,

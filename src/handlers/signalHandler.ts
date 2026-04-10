@@ -9,6 +9,10 @@ import { HyperliquidHandler } from './hyperliquid/hyperliquidHandler';
 import { TokocryptoHandler } from './tokocrypto/tokocryptoHandler';
 import { getExecutor } from '../executors/registry';
 import type { SignalAction } from '../executors/types';
+import { createLogger } from '../utils/logger';
+import { tradesOpenedTotal, signalLatency, exchangeErrorsTotal } from '../utils/metrics';
+
+const log = createLogger({ process: 'api', component: 'signal-handler' });
 
 async function resolveCredentials(exchangeTitle: string, exchangeId: number) {
   switch (exchangeTitle.toLowerCase()) {
@@ -127,7 +131,7 @@ export const SignalHandler = {
     try {
       credentials = await resolveCredentials(exchange.exchange_title, autotrader.exchange_id);
     } catch (err) {
-      console.error('[SignalHandler] KMS decrypt failed:', err);
+      log.error({ err }, 'KMS decrypt failed');
       await markWebhook('failed', 'Failed to load exchange credentials');
       return c.json({ error: 'Failed to load exchange credentials' }, 500);
     }
@@ -166,7 +170,9 @@ export const SignalHandler = {
 
     executor.execute(execCtx).then(async (result) => {
       if (!result.success) {
-        console.error('[SignalHandler] Executor failed:', result.error);
+        exchangeErrorsTotal.inc({ exchange: exchange.exchange_title, component: 'executor' });
+        tradesOpenedTotal.inc({ exchange: exchange.exchange_title, action: body.action, status: 'failed' });
+        log.error({ action: body.action, symbol: autotrader.symbol, error: result.error }, 'Executor failed');
         await Promise.all([
           markWebhook('failed', result.error),
           postgresDb.insert(webhook_responses).values({
@@ -179,7 +185,9 @@ export const SignalHandler = {
           }),
         ]);
       } else {
-        console.log('[SignalHandler] Executed:', body.action, autotrader.symbol, result.exchange_order_id);
+        tradesOpenedTotal.inc({ exchange: exchange.exchange_title, action: body.action, status: 'success' });
+        signalLatency.observe({ exchange: exchange.exchange_title, action: body.action }, Date.now() - start);
+        log.info({ action: body.action, symbol: autotrader.symbol, exchange_order_id: result.exchange_order_id }, 'Executor succeeded');
         await Promise.all([
           markWebhook('completed'),
           postgresDb.insert(webhook_responses).values({
@@ -192,7 +200,9 @@ export const SignalHandler = {
         ]);
       }
     }).catch(async (err) => {
-      console.error('[SignalHandler] Executor threw:', err);
+      exchangeErrorsTotal.inc({ exchange: exchange.exchange_title, component: 'executor' });
+      tradesOpenedTotal.inc({ exchange: exchange.exchange_title, action: body.action, status: 'failed' });
+      log.error({ err, action: body.action, symbol: autotrader.symbol }, 'Executor threw');
       const errMsg = (err as Error).message ?? String(err);
       await Promise.all([
         markWebhook('failed', errMsg),
@@ -208,7 +218,7 @@ export const SignalHandler = {
     });
 
     const latency_ms = Date.now() - start;
-    console.log('[SignalHandler] Processed:', body.action, autotrader.symbol, latency_ms);
+    log.info({ action: body.action, symbol: autotrader.symbol, latency_ms }, 'Signal processed');
     
     return c.json({
       ok: true,

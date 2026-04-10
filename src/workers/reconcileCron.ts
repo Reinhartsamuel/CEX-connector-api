@@ -18,6 +18,10 @@ import { decryptExchangeCreds } from "../utils/cryptography/decryptExchangeCreds
 import { signRequestRestGate } from "../utils/authentication/signRequestGate";
 import { signRequestOkx } from "../utils/authentication/signRequestOkx";
 import JSONbig from "json-bigint";
+import { createLogger, flushLogger } from "../utils/logger";
+import { reconcileCorrectionsTotal, exchangeErrorsTotal } from "../utils/metrics";
+
+const log = createLogger({ process: "reconcile-cron" });
 
 const RECONCILE_INTERVAL_MS = Number(process.env.RECONCILE_INTERVAL_MS) || 60_000;
 const GATE_BASE_URL = "https://api.gateio.ws";
@@ -35,7 +39,7 @@ const running = new Map<string, boolean>();
 
 async function runReconcile(exchange: string) {
   if (running.get(exchange)) {
-    console.log(`[ReconcileCron:${exchange}] Already running, skipping`);
+    log.info({ exchange }, 'Reconcile cron tick');
     return;
   }
   running.set(exchange, true);
@@ -43,11 +47,10 @@ async function runReconcile(exchange: string) {
 
   try {
     const corrections = await reconcileExchange(exchange);
-    console.log(
-      `[ReconcileCron:${exchange}] Done in ${Date.now() - start}ms — ${corrections} correction(s)`,
-    );
+    log.info({ exchange, duration_ms: Date.now() - start, corrections }, 'Reconcile done');
   } catch (err) {
-    console.error(`[ReconcileCron:${exchange}] Failed:`, err);
+    log.error({ err, exchange }, 'Reconcile failed');
+    exchangeErrorsTotal.inc({ exchange, component: "reconcile" });
   } finally {
     running.delete(exchange);
   }
@@ -77,10 +80,7 @@ async function reconcileExchange(exchangeTitle: string): Promise<number> {
       const n = await reconcileUser(exchangeTitle, row.exchange_id, row.exchange_user_id);
       total += n;
     } catch (err) {
-      console.error(
-        `[ReconcileCron:${exchangeTitle}] Error reconciling user ${row.exchange_user_id}:`,
-        err,
-      );
+      log.error({ err, exchange: exchangeTitle, userId: row.exchange_user_id }, 'Error reconciling user');
     }
   }
   return total;
@@ -110,7 +110,7 @@ async function reconcileUser(
 async function reconcileGate(exchangeId: number, userId: string): Promise<number> {
   const rawCreds = await decryptExchangeCreds(userId);
   if (!rawCreds) {
-    console.warn(`[ReconcileCron:gate] No creds for user ${userId}`);
+    log.warn({ exchange: 'gate', userId }, 'No creds for user');
     return 0;
   }
   const creds = { apiKey: rawCreds.apiKey, apiSecret: rawCreds.apiSecret };
@@ -159,10 +159,7 @@ async function reconcileGate(exchangeId: number, userId: string): Promise<number
       }
       // "partial_fill" and "other" → no action, worker will handle via WS
     } catch (err) {
-      console.error(
-        `[ReconcileCron:gate] Error checking order ${trade.trade_id} for user ${userId}:`,
-        err,
-      );
+      log.error({ err, exchange: 'gate', tradeId: trade.trade_id, userId }, 'Error checking order');
     }
   }
 
@@ -177,7 +174,7 @@ async function reconcileGate(exchangeId: number, userId: string): Promise<number
             and(eq(trades.id, id), inArray(trades.status, ["waiting_position", "partially_filled"])),
           );
         corrections++;
-        console.log(`[ReconcileCron:gate] Corrected trade ${id} → ${set.status}`);
+        log.info({ exchange }, 'Reconcile cron tick');
       }
     });
   }
@@ -219,7 +216,7 @@ async function reconcileGate(exchangeId: number, userId: string): Promise<number
           .set({ status: "closed", closed_at: new Date(), pnl })
           .where(and(eq(trades.id, id), eq(trades.status, "waiting_targets")));
         corrections++;
-        console.log(`[ReconcileCron:gate] Corrected trade ${id} → closed (pnl=${pnl})`);
+        log.info({ exchange }, 'Reconcile cron tick');
       }
     });
   }
@@ -283,7 +280,7 @@ async function gateGetPositions(creds: { apiKey: string; apiSecret: string }) {
 async function reconcileOkx(exchangeId: number, userId: string): Promise<number> {
   const rawCreds = await decryptExchangeCreds(userId);
   if (!rawCreds || !rawCreds.passphrase) {
-    console.warn(`[ReconcileCron:okx] No creds for user ${userId}`);
+    log.warn({ exchange: 'okx', userId }, 'No creds for user');
     return 0;
   }
   const creds = {
@@ -332,10 +329,7 @@ async function reconcileOkx(exchangeId: number, userId: string): Promise<number>
         });
       }
     } catch (err) {
-      console.error(
-        `[ReconcileCron:okx] Error checking order ${trade.trade_id} for user ${userId}:`,
-        err,
-      );
+      log.error({ err, exchange: 'okx', tradeId: trade.trade_id, userId }, 'Error checking order');
     }
   }
 
@@ -349,7 +343,7 @@ async function reconcileOkx(exchangeId: number, userId: string): Promise<number>
             and(eq(trades.id, id), inArray(trades.status, ["waiting_position", "partially_filled"])),
           );
         corrections++;
-        console.log(`[ReconcileCron:okx] Corrected trade ${id} → ${set.status}`);
+        log.info({ exchange }, 'Reconcile cron tick');
       }
     });
   }
@@ -394,7 +388,7 @@ async function reconcileOkx(exchangeId: number, userId: string): Promise<number>
           .set({ status: "closed", closed_at: new Date(), pnl })
           .where(and(eq(trades.id, id), eq(trades.status, "waiting_targets")));
         corrections++;
-        console.log(`[ReconcileCron:okx] Corrected trade ${id} → closed (pnl=${pnl})`);
+        log.info({ exchange }, 'Reconcile cron tick');
       }
     });
   }
@@ -516,10 +510,7 @@ async function reconcileHyperliquid(exchangeId: number, userId: string): Promise
           });
         }
       } catch (err) {
-        console.error(
-          `[ReconcileCron:hyperliquid] Error checking trade ${trade.trade_id} for user ${userId}:`,
-          err,
-        );
+        log.error({ err, exchange: 'hyperliquid', tradeId: trade.trade_id, userId }, 'Error checking trade');
       }
     }
 
@@ -536,9 +527,7 @@ async function reconcileHyperliquid(exchangeId: number, userId: string): Promise
               ),
             );
           corrections++;
-          console.log(
-            `[ReconcileCron:hyperliquid] Corrected trade ${id} → ${set.status}`,
-          );
+          log.info({ exchange: 'hyperliquid', tradeId: id, status: set.status }, 'Trade corrected');
         }
       });
     }
@@ -597,7 +586,7 @@ async function reconcileHyperliquid(exchangeId: number, userId: string): Promise
           .set(set)
           .where(and(eq(trades.id, id), eq(trades.status, "waiting_targets")));
         corrections++;
-        console.log(`[ReconcileCron:hyperliquid] Corrected trade ${id} → closed`);
+        log.info({ exchange }, 'Reconcile cron tick');
       }
     });
   }
@@ -629,7 +618,7 @@ async function reconcileTokocrypto(exchangeId: number, userId: string): Promise<
   // populated — the correct credential source is KMS via decryptExchangeCreds.
   const rawCreds = await decryptExchangeCreds(userId);
   if (!rawCreds) {
-    console.warn(`[ReconcileCron:tokocrypto] No creds for user ${userId}`);
+    log.warn({ exchange: 'tokocrypto', userId }, 'No creds for user');
     return 0;
   }
   const { apiKey, apiSecret } = rawCreds;
@@ -685,10 +674,7 @@ async function reconcileTokocrypto(exchangeId: number, userId: string): Promise<
         });
       }
     } catch (err) {
-      console.error(
-        `[ReconcileCron:tokocrypto] Error checking order ${trade.trade_id} for user ${userId}:`,
-        err,
-      );
+      log.error({ err, exchange: 'tokocrypto', tradeId: trade.trade_id, userId }, 'Error checking order');
     }
   }
 
@@ -705,7 +691,7 @@ async function reconcileTokocrypto(exchangeId: number, userId: string): Promise<
             ),
           );
         corrections++;
-        console.log(`[ReconcileCron:tokocrypto] Corrected trade ${id} → ${set.status}`);
+        log.info({ exchange }, 'Reconcile cron tick');
       }
     });
   }
@@ -731,7 +717,7 @@ async function reconcileTokocrypto(exchangeId: number, userId: string): Promise<
     const data = await res.json();
     positions = Array.isArray(data) ? data : [];
   } catch (err) {
-    console.error(`[ReconcileCron:tokocrypto] Error fetching positions for user ${userId}:`, err);
+    log.error({ err, exchange: 'tokocrypto' }, 'Error fetching positions for user ${userId}');
     return corrections;
   }
 
@@ -760,7 +746,7 @@ async function reconcileTokocrypto(exchangeId: number, userId: string): Promise<
           .set({ status: "closed", closed_at: new Date() })
           .where(and(eq(trades.id, id), eq(trades.status, "waiting_targets")));
         corrections++;
-        console.log(`[ReconcileCron:tokocrypto] Corrected trade ${id} → closed`);
+        log.info({ exchange }, 'Reconcile cron tick');
       }
     });
   }
@@ -775,12 +761,12 @@ async function reconcileTokocrypto(exchangeId: number, userId: string): Promise<
 async function reconcileBitget(exchangeId: number, userId: string): Promise<number> {
   const rawCreds = await decryptExchangeCreds(userId);
   if (!rawCreds || !rawCreds.passphrase) {
-    console.warn(`[ReconcileCron:bitget] No creds for user ${userId}`);
+    log.warn({ exchange: 'bitget', userId }, 'No creds for user');
     return 0;
   }
   // For now, skip Bitget reconciliation - would need CCXT integration or custom REST signing
   // Same pattern as tokocrypto but with Bitget-specific API
-  console.log(`[ReconcileCron:bitget] Skipped - TODO: implement REST signing`);
+  log.info({ exchange }, 'Reconcile cron tick');
   return 0;
 }
 
@@ -791,11 +777,11 @@ async function reconcileBitget(exchangeId: number, userId: string): Promise<numb
 async function reconcileMexc(exchangeId: number, userId: string): Promise<number> {
   const rawCreds = await decryptExchangeCreds(userId);
   if (!rawCreds) {
-    console.warn(`[ReconcileCron:mexc] No creds for user ${userId}`);
+    log.warn({ exchange: 'mexc', userId }, 'No creds for user');
     return 0;
   }
   // For now, skip MEXC reconciliation - would need CCXT integration or custom REST signing
-  console.log(`[ReconcileCron:mexc] Skipped - TODO: implement REST signing`);
+  log.info({ exchange }, 'Reconcile cron tick');
   return 0;
 }
 
@@ -806,11 +792,11 @@ async function reconcileMexc(exchangeId: number, userId: string): Promise<number
 async function reconcileBitmart(exchangeId: number, userId: string): Promise<number> {
   const rawCreds = await decryptExchangeCreds(userId);
   if (!rawCreds || !rawCreds.passphrase) {
-    console.warn(`[ReconcileCron:bitmart] No creds for user ${userId}`);
+    log.warn({ exchange: 'bitmart', userId }, 'No creds for user');
     return 0;
   }
   // For now, skip BitMart reconciliation - would need CCXT integration or custom REST signing
-  console.log(`[ReconcileCron:bitmart] Skipped - TODO: implement REST signing`);
+  log.info({ exchange }, 'Reconcile cron tick');
   return 0;
 }
 
@@ -820,9 +806,7 @@ async function reconcileBitmart(exchangeId: number, userId: string): Promise<num
 
 const EXCHANGES = ["gate", "okx", "hyperliquid", "tokocrypto", "bitget", "mexc", "bitmart"];
 
-console.log(
-  `[ReconcileCron] Starting — interval=${RECONCILE_INTERVAL_MS}ms, exchanges=${EXCHANGES.join(", ")}`,
-);
+log.info({ interval_ms: RECONCILE_INTERVAL_MS, exchanges: EXCHANGES }, 'ReconcileCron starting');
 
 // Run immediately on startup, then on interval
 for (const exchange of EXCHANGES) {

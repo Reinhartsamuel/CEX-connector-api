@@ -25,6 +25,88 @@ export const GateServices = {
     baseUrl: "https://api.gateio.ws",
   } as GateServiceConfig,
   /**
+   * Get contract details for a given symbol (e.g., "BTC_USDT")
+   * Returns quanto_multiplier and other contract metadata
+   * GET /api/v4/futures/usdt/contracts/{contract}
+   */
+  getContract: async function (contract: string) {
+    if (!this.config.credentials) {
+      throw new Error("No credentials found. Call initialize first!");
+    }
+
+    const method = "GET";
+    const urlPath = `/api/v4/futures/usdt/contracts/${encodeURIComponent(contract)}`;
+    const queryString = "";
+
+    // Generate signed headers (public endpoint but we use same signing for consistency)
+    const headers = signRequestRestGate(this.config.credentials, {
+      method,
+      urlPath,
+      queryString,
+      payload: "",
+    });
+
+    const response = await fetch(`${this.config.baseUrl}${urlPath}`, {
+      method,
+      headers: {
+        "Content-Type": "application/json",
+        ...headers,
+      },
+    });
+
+    if (!response.ok) {
+      const errorText = await response.text();
+      return {
+        status: "error",
+        message: errorText,
+        statusCode: response.status,
+      };
+    }
+
+    const responseText = await response.text();
+    return JSONbig.parse(responseText);
+  },
+  /**
+   * List all available futures contracts with their multipliers
+   * GET /api/v4/futures/usdt/contracts
+   */
+  listContracts: async function () {
+    if (!this.config.credentials) {
+      throw new Error("No credentials found. Call initialize first!");
+    }
+
+    const method = "GET";
+    const urlPath = "/api/v4/futures/usdt/contracts";
+    const queryString = "";
+
+    const headers = signRequestRestGate(this.config.credentials, {
+      method,
+      urlPath,
+      queryString,
+      payload: "",
+    });
+
+    const response = await fetch(`${this.config.baseUrl}${urlPath}`, {
+      method,
+      headers: {
+        "Content-Type": "application/json",
+        ...headers,
+      },
+    });
+
+    if (!response.ok) {
+      const errorText = await response.text();
+      return {
+        status: "error",
+        message: errorText,
+        statusCode: response.status,
+      };
+    }
+
+    const responseText = await response.text();
+    return JSONbig.parse(responseText);
+  },
+  /**
    * Update margin mode for a futures position
    * @param contract - The contract symbol (e.g., "BTC_USDT")
    * @param marginMode - The margin mode: "cross" or "isolated"

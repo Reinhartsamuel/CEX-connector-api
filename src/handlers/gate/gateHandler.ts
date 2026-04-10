@@ -23,6 +23,9 @@ import { and, eq } from "drizzle-orm";
 import * as JSONbig from "json-bigint";
 import redis from "../../db/redis";
 import {
+import { createLogger } from '../../utils/logger';
+
+const log = createLogger({ exchange: 'gate', process: 'handler' });
   decrypt,
   generateAndEncryptCredentials,
   getOrDecryptDEK,
@@ -99,7 +102,7 @@ export const GateHandler = {
         queryString: "",
         payload: undefined,
       });
-      console.log(account?.user_id,'account?.user_id')
+      log.debug({ data: account?.user_id }, 'account?.user_id')
 
       if (account.status === "error") {
         return c.json(account, { status: account.statusCode });
@@ -150,7 +153,7 @@ export const GateHandler = {
         exchange,
       });
     } catch (e) {
-      console.error(e, "ERROR REGISTER GATE USER");
+      log.error({ err: e }, 'ERROR REGISTER GATE USER');
       if (e instanceof Error) {
         return c.json({ message: "ERROR!", error: e.message }, { status: 500 });
       }
@@ -178,20 +181,20 @@ export const GateHandler = {
         process.env.REDIS_URL || "redis://127.0.0.1:6379",
       );
 
-      console.log("updating leverage");
+      log.info({}, 'updating leverage');
       // update leverage
       const resLeverage = await GateServices.updateLeverage(
         body.contract,
         body.leverage,
       );
-      console.log(resLeverage, "resLeverage");
+      log.debug({ data: resLeverage }, 'resLeverage');
 
       // update margin mode
       const resMarginMode = await GateServices.updateMarginMode(
         body.contract,
         body.leverage_type,
       );
-      console.log(resMarginMode, "resMarginMode");
+      log.debug({ data: resMarginMode }, 'resMarginMode');
 
       // normalize size sign for entry order (API expects positive to open long, negative to open short)
       let sizeForOrder = body.size;
@@ -215,9 +218,9 @@ export const GateHandler = {
         auto_size: "",
         settle: "usdt",
       };
-      console.log(orderPayload, "orderPayload");
+      log.debug({ data: orderPayload }, 'orderPayload');
       const resPlaceOrder = await GateServices.placeFuturesOrder(orderPayload);
-      console.log(resPlaceOrder, "resPlaceOrder");
+      log.debug({ data: resPlaceOrder }, 'resPlaceOrder');
       if (resPlaceOrder?.status) {
         set(
           `trade:${resPlaceOrder.id}`,
@@ -279,7 +282,7 @@ export const GateHandler = {
       //     },
       //     order_type: body.market_type === 'market' ? orderType : undefined,
       //   };
-      //   console.log(payload, "PAYLOAD TP");
+      //   log.debug({ data: payload }, 'PAYLOAD TP');
       //   const resTP = await GateServices.triggerPriceOrder(payload);
       //   allReturn.data.take_profit = resTP;
       // }
@@ -302,7 +305,7 @@ export const GateHandler = {
       //     },
       //     order_type: body.market_type === 'market' ? orderType : undefined,
       //   };
-      //   console.log(payload, "PAYLOAD SL");
+      //   log.debug({ data: payload }, 'PAYLOAD SL');
       //   const resSL = await GateServices.triggerPriceOrder(payload);
       //   allReturn.data.stop_loss = resSL;
       // }
@@ -359,9 +362,9 @@ export const GateHandler = {
         },
         order_type: body.market_type === "market" ? orderType : undefined,
       };
-      console.log(payload, "PAYLOAD TP");
+      log.debug({ data: payload }, 'PAYLOAD TP');
       const resTP = await GateServices.triggerPriceOrder(payload);
-      console.log(resTP, "resTP");
+      log.debug({ data: resTP }, 'resTP');
     }
 
     if (body.stop_loss.enabled) {
@@ -382,9 +385,9 @@ export const GateHandler = {
         },
         order_type: body.market_type === "market" ? orderType : undefined,
       };
-      console.log(payload, "PAYLOAD SL");
+      log.debug({ data: payload }, 'PAYLOAD SL');
       const resSL = await GateServices.triggerPriceOrder(payload);
-      console.log(resSL, "resSL");
+      log.debug({ data: resSL }, 'resSL');
     }
   },
   // closePosition: async function (c: Context) {
@@ -400,7 +403,7 @@ export const GateHandler = {
   //     const res = await GateServices.closeFuturesOrder(body);
   //     return c.json(res);
   //   } catch (e) {
-  //     console.error(e, "ERROR 500 CLOSE POSITION");
+  //     log.error({ err: e }, 'ERROR 500 CLOSE POSITION');
   //     if (e instanceof Error) {
   //       return c.json(
   //         {
@@ -434,7 +437,7 @@ export const GateHandler = {
   //     const res3 = await GateServices.cancelPriceTrigger(slId);
   //     return c.json({ res1, res2, res3 });
   //   } catch (e) {
-  //     console.error(e, "ERROR 500 CANCEL POSITION");
+  //     log.error({ err: e }, 'ERROR 500 CANCEL POSITION');
   //     if (e instanceof Error) {
   //       return c.json(
   //         {
@@ -464,7 +467,7 @@ export const GateHandler = {
   //     const res = await GateServices.getFuturesOrder(tradeId);
   //     return c.json(res);
   //   } catch (e) {
-  //     console.error(e, "ERROR 500 GET ORDER DETAILS");
+  //     log.error({ err: e }, 'ERROR 500 GET ORDER DETAILS');
   //     if (e instanceof Error) {
   //       return c.json(
   //         {
@@ -494,7 +497,7 @@ export const GateHandler = {
   //     const mainKeysInfo = await GateServices.getMainKeysInfo();
   //     return c.json({ accountInfo, mainKeysInfo });
   //   } catch (e) {
-  //     console.error(e, "ERROR 500 GET ORDER DETAILS");
+  //     log.error({ err: e }, 'ERROR 500 GET ORDER DETAILS');
   //     if (e instanceof Error) {
   //       return c.json(
   //         {
@@ -532,20 +535,20 @@ export const GateHandler = {
         message: "ok",
         data: null,
       };
-      console.log("updating leverage");
+      log.info({}, 'updating leverage');
       // update leverage
       const resLeverage = await GateServices.updateLeverage(
         body.contract,
         body.leverage,
       );
-      console.log(resLeverage, "resLeverage");
+      log.debug({ data: resLeverage }, 'resLeverage');
 
       // update margin mode
       const resMarginMode = await GateServices.updateMarginMode(
         body.contract,
         body.leverage_type,
       );
-      console.log(resMarginMode, "resMarginMode");
+      log.debug({ data: resMarginMode }, 'resMarginMode');
 
       // normalize size sign for entry order (API expects positive to open long, negative to open short)
       let sizeForOrder = body.size;
@@ -569,9 +572,9 @@ export const GateHandler = {
         auto_size: "",
         settle: "usdt",
       };
-      console.log(orderPayload, "orderPayload");
+      log.debug({ data: orderPayload }, 'orderPayload');
       const resPlaceOrder = await GateServices.placeFuturesOrder(orderPayload);
-      console.log(resPlaceOrder, "resPlaceOrder");
+      log.debug({ data: resPlaceOrder }, 'resPlaceOrder');
 
       allReturn.data = { resPlaceOrder };
 
@@ -626,7 +629,7 @@ export const GateHandler = {
           },
           order_type: body.market_type === "market" ? orderType : undefined,
         };
-        console.log(payload, "PAYLOAD TP");
+        log.debug({ data: payload }, 'PAYLOAD TP');
         const resTP = await GateServices.triggerPriceOrder(payload);
         allReturn.data.take_profit = resTP;
       }
@@ -653,7 +656,7 @@ export const GateHandler = {
           },
           order_type: body.market_type === "market" ? orderType : undefined,
         };
-        console.log(payload, "PAYLOAD SL");
+        log.debug({ data: payload }, 'PAYLOAD SL');
         const resSL = await GateServices.triggerPriceOrder(payload);
         allReturn.data.stop_loss = resSL;
       }
@@ -718,7 +721,7 @@ export const GateHandler = {
           .returning();
         allReturn.data.newTrade = newTrade;
       } catch (err) {
-        console.error(err, "ERROR SAVING TO DB");
+        log.error({ err }, 'ERROR SAVING TO DB');
       }
 
       return c.json(allReturn);
@@ -811,7 +814,7 @@ export const GateHandler = {
       // const res = await GateServices.closeFuturesOrder(body);
       // return c.json(res);
     } catch (e) {
-      console.error(e, "ERROR 500 CLOSE POSITION");
+      log.error({ err: e }, 'ERROR 500 CLOSE POSITION');
       if (e instanceof Error) {
         return c.json(
           {
@@ -855,7 +858,7 @@ export const GateHandler = {
       return c.json(res);
       // return c.json(body);
     } catch (e) {
-      console.error(e, "ERROR 500 GET ORDER DETAILS");
+      log.error({ err: e }, 'ERROR 500 GET ORDER DETAILS');
       if (e instanceof Error) {
         return c.json(
           {

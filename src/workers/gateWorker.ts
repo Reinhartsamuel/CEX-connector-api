@@ -8,6 +8,10 @@ import { and, desc, eq, inArray } from "drizzle-orm";
 import { signWebSocketRequest, signRequestRestGate } from "../utils/authentication/signRequestGate";
 import { publishWsReady } from "../utils/wsReady";
 import { decryptExchangeCreds } from "../utils/cryptography/decryptExchangeCreds";
+import { createLogger, flushLogger } from "../utils/logger";
+import { wsConnectionsActive, tradesClosedTotal, exchangeErrorsTotal } from "../utils/metrics";
+
+const log = createLogger({ exchange: "gate", process: "worker" });
 
 const GATE_BASE_URL = "https://api.gateio.ws";
 
@@ -33,7 +37,7 @@ async function startStreamConsumer() {
   // Create consumer group if it doesn't exist (idempotent)
   try {
     await control.xgroup("CREATE", STREAM_KEY, GROUP_NAME, "$", "MKSTREAM");
-    console.log(`[Gate WS] Created consumer group '${GROUP_NAME}' on stream '${STREAM_KEY}'`);
+    log.info({ group: GROUP_NAME, stream: STREAM_KEY }, "Created consumer group");
   } catch (err: any) {
     if (!err.message?.includes("BUSYGROUP")) throw err;
     // Group already exists — expected on restart
@@ -47,17 +51,17 @@ async function startStreamConsumer() {
     );
     const messages = Array.isArray(claimed) ? (claimed[1] ?? []) : [];
     if (messages.length > 0) {
-      console.log(`[Gate WS] Reclaimed ${messages.length} pending message(s) on startup`);
+      log.info({ count: messages.length }, "Reclaimed pending messages on startup");
       for (const [id, fields] of messages) {
         await handleStreamMessage(id, fields);
       }
     }
   } catch (err) {
-    console.error("[Gate WS] XAUTOCLAIM failed on startup:", err);
+    log.error({ err }, "XAUTOCLAIM failed on startup");
   }
 
   // Main read loop
-  console.log("[Gate WS] Listening for control commands via Redis Streams...");
+  log.info("Listening for control commands via Redis Streams");
   while (true) {
     try {
       const results = await control.xreadgroup(
@@ -75,7 +79,8 @@ async function startStreamConsumer() {
         }
       }
     } catch (err) {
-      console.error("[Gate WS] Stream read error:", err);
+      log.error({ err }, "Stream read error");
+      exchangeErrorsTotal.inc({ exchange: "gate", component: "worker" });
       await new Promise((r) => setTimeout(r, 1000));
     }
   }
@@ -101,19 +106,19 @@ async function handleStreamMessage(id: string, fields: string[]) {
 
     await control.xack(STREAM_KEY, GROUP_NAME, id);
   } catch (err) {
-    console.error("[Gate WS] Error handling stream message:", id, err);
+    log.error({ err, messageId: id }, "Error handling stream message");
     // Do not ACK — message remains pending and will be reclaimed on next startup
   }
 }
 
 startStreamConsumer().catch((err) => {
-  console.error("[Gate WS] Stream consumer fatal error:", err);
+  log.fatal({ err }, "Stream consumer fatal error");
   process.exit(1);
 });
 
 // ---- Restore connections for users with active trades on startup ---- //
 async function restoreConnections() {
-  console.log("[Gate WS] Restoring connections for users with active trades...");
+  log.info("Restoring connections for users with active trades");
 
   try {
     const activeTrades = await postgresDb
@@ -127,13 +132,13 @@ async function restoreConnections() {
         ),
       );
 
-    console.log(`[Gate WS] Found ${activeTrades.length} users with active trades to reconnect`);
+    log.info({ count: activeTrades.length }, "Found users with active trades to reconnect");
 
     for (const { exchange_user_id } of activeTrades) {
       ensureConnection(exchange_user_id);
     }
   } catch (err) {
-    console.error("[Gate WS] Failed to restore connections on startup:", err);
+    log.error({ err }, "Failed to restore connections on startup");
   }
 }
 
@@ -177,7 +182,7 @@ async function ensureConnection(
   let existing = connections.get(userId);
 
   if (existing?.ws && existing.ws.readyState === WebSocket.OPEN) {
-    console.log(`WS Worker: connection already open for user ${userId}`);
+    log.debug({ userId }, "Connection already open");
     // Still publish ready so the executor waiting on ws-ready doesn't hang
     publishWsReady(redis, "gate", userId).catch(() => {});
     return;
@@ -185,11 +190,11 @@ async function ensureConnection(
 
   const creds = await fetchCreds(userId);
   if (!creds) {
-    console.warn(`WS Worker: No credentials found for user ${userId}`);
+    log.warn({ userId }, "No credentials found");
     return;
   }
 
-  console.log(`WS Worker: Opening WS for user ${userId}`);
+  log.info({ userId }, "Opening WebSocket connection");
 
   const wsUrl = "wss://fx-ws.gateio.ws/v4/ws/usdt";
   const ws = new WebSocket(wsUrl);
@@ -204,9 +209,10 @@ async function ensureConnection(
   ws.on("open", () => onWsOpen(userId, ws, creds));
   ws.on("message", (raw: Buffer) => onWsMessage(userId, raw));
   ws.on("close", (code, reason) => onWsClose(userId, code, reason));
-  ws.on("error", (err) =>
-    console.error(`WS Worker: WS error (${userId})`, err),
-  );
+  ws.on("error", (err) => {
+    log.error({ err, userId }, "WebSocket error");
+    exchangeErrorsTotal.inc({ exchange: "gate", component: "worker" });
+  });
 }
 
 // ------------------------------------------- //
@@ -218,7 +224,8 @@ function onWsOpen(
   ws: WebSocket,
   creds: { apiKey: string; apiSecret: string },
 ) {
-  console.log(`WS Worker: WS OPEN for user ${userId}`);
+  log.info({ userId }, "WebSocket open");
+  wsConnectionsActive.inc({ exchange: "gate" });
 
   const state = connections.get(userId);
   if (!state) return;
@@ -247,7 +254,7 @@ function onWsOpen(
       payload: [userId, "!all"],
     }),
   );
-  console.log(`📡 SUBSCRIBED (ORDERS) user=${userId}`);
+  log.info({ userId, channel: "futures.orders" }, "Subscribed");
 
   const authPositions = signWebSocketRequest(
     {
@@ -270,16 +277,16 @@ function onWsOpen(
       payload: [userId, "!all"],
     }),
   );
-  console.log(`📡 SUBSCRIBED (POSITIONS) user=${userId}`);
+  log.info({ userId, channel: "futures.positions" }, "Subscribed");
 
   // == Signal that WS is ready so executors can proceed with order placement ==
   publishWsReady(redis, "gate", userId).catch((err) =>
-    console.error(`WS Worker: failed to publish ws-ready for user ${userId}:`, err),
+    log.error({ err, userId }, "Failed to publish ws-ready"),
   );
 
   // == Run snapshot reconciliation after subscribing ==
   reconcileSnapshot(userId, creds).catch((err) =>
-    console.error(`WS Worker: reconciliation failed for user ${userId}:`, err),
+    log.error({ err, userId }, "Reconciliation failed"),
   );
 
   // == Setup ping interval ==
@@ -294,7 +301,7 @@ function onWsOpen(
           event: "ping",
         }),
       );
-      console.log(`🏓 PING → user=${userId}`);
+      log.debug({ userId }, "Ping sent");
     }
   }, 25_000); // must be ≤ 30s for Gate
 }
@@ -304,7 +311,7 @@ async function onWsMessage(userId: string, raw: Buffer) {
   try {
     msg = JSONbig.parse(raw.toString());
   } catch (err) {
-    console.error("WS Worker: failed to parse WS message", err);
+    log.error({ err }, "Failed to parse WS message");
     return;
   }
 
@@ -316,7 +323,7 @@ async function onWsMessage(userId: string, raw: Buffer) {
   const items = Array.isArray(payload) ? payload : [payload];
 
   if (channel === "futures.pong") {
-    console.log(`🏓 PONG ← user=${userId}`);
+    log.debug({ userId }, "Pong received");
     return;
   }
 
@@ -327,7 +334,7 @@ async function onWsMessage(userId: string, raw: Buffer) {
     await postgresDb.transaction(async (tx) => {
       for (const item of items) {
         const event = classifyOrderEvent(item);
-        console.log("[Gate WS] classified order event:", event);
+        log.debug({ event, orderId: item.id_string }, "Classified order event");
         if (event === "subscribe_ack") continue;
 
         let tradeData: Trade | null = null;
@@ -339,14 +346,14 @@ async function onWsMessage(userId: string, raw: Buffer) {
               .where(eq(trades.trade_id, item.id_string));
             tradeData = row;
           } catch (e) {
-            console.error(e, "error query");
+            log.error({ err: e }, "Error querying trade by order id");
           }
         }
 
         if (item.id_string) {
           switch (event) {
             case "order_filled_open":
-              console.log(`[Gate WS] Order ${item.id_string} filled → waiting_targets`);
+              log.info({ orderId: item.id_string }, "Order filled → waiting_targets");
               await tx
                 .update(trades)
                 .set({
@@ -358,7 +365,7 @@ async function onWsMessage(userId: string, raw: Buffer) {
               break;
 
             case "order_filled_close":
-              console.log(`[Gate WS] Close order ${item.id_string} filled`);
+              log.info({ orderId: item.id_string }, "Close order filled");
               if (tradeData) {
                 await tx
                   .update(trades)
@@ -379,10 +386,10 @@ async function onWsMessage(userId: string, raw: Buffer) {
               break;
 
             default:
-              console.log("[Gate WS] Order event not handled:", event, item.id_string);
+              log.debug({ event, orderId: item.id_string }, "Order event not handled");
           }
         } else {
-          console.log("[Gate WS] Order update missing id_string, skipping");
+          log.debug("Order update missing id_string, skipping");
         }
 
         await redis.publish(`user:${userId}:orders:chan`, JSON.stringify(item));
@@ -391,10 +398,7 @@ async function onWsMessage(userId: string, raw: Buffer) {
   }
 
   if (channel === "futures.positions") {
-    console.log(
-      `📥 POSITIONS UPDATE (${userId}):`,
-      JSON.stringify(msg, null, 2),
-    );
+    log.debug({ userId, itemCount: items.length }, "Positions update received");
     // Handle position updates
     await Promise.all(
       items.map(async (item: any) => {
@@ -414,9 +418,8 @@ async function onWsMessage(userId: string, raw: Buffer) {
 }
 
 function onWsClose(userId: string, code: number, reason: Buffer) {
-  console.warn(
-    `WS Worker: WS CLOSED user=${userId} code=${code} reason=${reason.toString()}`,
-  );
+  log.warn({ userId, code, reason: reason.toString() }, "WebSocket closed");
+  wsConnectionsActive.dec({ exchange: "gate" });
 
   const state = connections.get(userId);
   if (!state) return;
@@ -431,7 +434,7 @@ function onWsClose(userId: string, code: number, reason: Buffer) {
   const delay = state.backoff;
   state.backoff = Math.min(state.backoff * 1.5, 60_000);
 
-  console.log(`WS Worker: Reconnecting user ${userId} in ${delay}ms...`);
+  log.info({ userId, delay }, "Scheduling reconnect");
 
   setTimeout(() => ensureConnection(userId), delay);
 }
@@ -441,7 +444,7 @@ function onWsClose(userId: string, code: number, reason: Buffer) {
 // ------------------------------------------- //
 
 function closeConnection(userId: string) {
-  console.log(`WS Worker: Closing WS for user ${userId}`);
+  log.info({ userId }, "Closing WebSocket connection");
 
   const st = connections.get(userId);
   if (!st) return;
@@ -459,14 +462,17 @@ function closeConnection(userId: string) {
 //             GRACEFUL SHUTDOWN
 // ------------------------------------------- //
 
-process.on("SIGINT", () => {
-  console.log("WS Worker: shutting down...");
-
-  for (const [userId, st] of connections.entries()) {
+async function shutdown() {
+  log.info("Shutting down");
+  for (const [, st] of connections.entries()) {
     if (st.ws) st.ws.terminate();
   }
+  await flushLogger();
   process.exit(0);
-});
+}
+
+process.on("SIGINT", shutdown);
+process.on("SIGTERM", shutdown);
 
 // ------------------------------------------- //
 //        SNAPSHOT RECONCILIATION
@@ -484,7 +490,7 @@ async function reconcileSnapshot(
   userId: string,
   creds: { apiKey: string; apiSecret: string },
 ) {
-  console.log(`[Reconcile] Starting snapshot reconciliation for user ${userId}`);
+  log.info({ userId }, "Starting snapshot reconciliation");
 
   // Find the exchange record for this user
   const exchange = await postgresDb.query.exchanges.findFirst({
@@ -492,7 +498,7 @@ async function reconcileSnapshot(
     where: eq(exchanges.exchange_user_id, userId),
   });
   if (!exchange) {
-    console.warn(`[Reconcile] No exchange record for exchange_user_id=${userId}`);
+    log.warn({ userId }, "No exchange record found for reconcile");
     return;
   }
 
@@ -507,7 +513,7 @@ async function reconcileSnapshot(
       ),
     );
 
-  console.log(`[Reconcile] Found ${pendingTrades.length} pending trades to check for user ${userId}`);
+  log.info({ userId, count: pendingTrades.length }, "Pending trades to reconcile");
 
   // Fetch all order statuses from REST first, then apply updates in a single transaction
   const pendingUpdates: Array<{ trade: typeof pendingTrades[0]; event: OrderEvent; orderData: any }> = [];
@@ -516,15 +522,16 @@ async function reconcileSnapshot(
     try {
       const orderData = await gateRestGetOrder(creds, trade.trade_id);
       if (!orderData || orderData.status === "error") {
-        console.warn(`[Reconcile] Failed to fetch order ${trade.trade_id}:`, orderData);
+        log.warn({ tradeId: trade.trade_id }, "Failed to fetch order for reconcile");
         continue;
       }
 
       const event = classifyOrderEvent(orderData);
-      console.log(`[Reconcile] Order ${trade.trade_id} REST status: ${event}`);
+      log.debug({ tradeId: trade.trade_id, event }, "Order REST status");
       pendingUpdates.push({ trade, event, orderData });
     } catch (err) {
-      console.error(`[Reconcile] Error checking order ${trade.trade_id}:`, err);
+      log.error({ err, tradeId: trade.trade_id }, "Error checking order for reconcile");
+      exchangeErrorsTotal.inc({ exchange: "gate", component: "reconcile" });
     }
   }
 
@@ -540,19 +547,19 @@ async function reconcileSnapshot(
               open_filled_at: orderData.finish_time ? Number(orderData.finish_time) : undefined,
             })
             .where(eq(trades.id, trade.id));
-          console.log(`[Reconcile] Trade ${trade.id} updated to waiting_targets (was ${trade.status})`);
+          log.info({ tradeId: trade.id, prev: trade.status }, "Trade reconciled → waiting_targets");
         } else if (event === "order_filled_close") {
           await tx
             .update(trades)
             .set({ status: "closed", closed_at: new Date() })
             .where(eq(trades.id, trade.id));
-          console.log(`[Reconcile] Trade ${trade.id} updated to closed (reduce-only fill)`);
+          log.info({ tradeId: trade.id }, "Trade reconciled → closed (reduce-only fill)");
         } else if (event === "order_cancelled") {
           await tx
             .update(trades)
             .set({ status: "cancelled", cancelled_at: new Date() })
             .where(eq(trades.id, trade.id));
-          console.log(`[Reconcile] Trade ${trade.id} updated to cancelled`);
+          log.info({ tradeId: trade.id }, "Trade reconciled → cancelled");
         }
       }
     });
@@ -570,14 +577,14 @@ async function reconcileSnapshot(
     );
 
   if (waitingTrades.length === 0) {
-    console.log(`[Reconcile] No waiting_targets trades to check for user ${userId}`);
+    log.debug({ userId }, "No waiting_targets trades to check");
     return;
   }
 
   // Fetch all current positions from Gate REST
   const positions = await gateRestGetPositions(creds);
   if (!positions || positions.status === "error") {
-    console.warn(`[Reconcile] Failed to fetch positions for user ${userId}:`, positions);
+    log.warn({ userId }, "Failed to fetch positions for reconcile");
     return;
   }
 
@@ -589,14 +596,14 @@ async function reconcileSnapshot(
     }
   }
 
-  console.log(`[Reconcile] Open position contracts: [${[...openPositionContracts].join(", ")}]`);
+  log.debug({ userId, contracts: [...openPositionContracts] }, "Open position contracts");
 
   // Collect closed trades and their PnL from REST, then batch-update in a transaction
   const closedUpdates: Array<{ trade: typeof waitingTrades[0]; pnl: string }> = [];
 
   for (const trade of waitingTrades) {
     if (!openPositionContracts.has(trade.contract)) {
-      console.log(`[Reconcile] Trade ${trade.id} (${trade.contract}) has no open position — marking closed`);
+      log.info({ tradeId: trade.id, contract: trade.contract }, "Trade has no open position — marking closed");
 
       let pnl = "0";
       try {
@@ -632,7 +639,7 @@ async function reconcileSnapshot(
     }
   }
 
-  console.log(`[Reconcile] Snapshot reconciliation complete for user ${userId}`);
+  log.info({ userId }, "Snapshot reconciliation complete");
 }
 
 // ---- Gate REST helpers for reconciliation (avoids singleton GateServices state issue) ----
@@ -739,15 +746,7 @@ function classifyPositionEvent(
   const newSize = Number(item?.size ?? 0);
   const prevSize = prev ? Number(prev.size ?? 0) : 0;
 
-  console.log("===========classifyPositionEvent===========");
-  console.log("===========classifyPositionEvent===========");
-  console.log("===========classifyPositionEvent===========");
-  console.log("===========classifyPositionEvent===========");
-  console.log(`prevSize: ${prevSize}, newSize: ${newSize}`);
-  console.log("===========classifyPositionEvent===========");
-  console.log("===========classifyPositionEvent===========");
-  console.log("===========classifyPositionEvent===========");
-  console.log("===========classifyPositionEvent===========");
+  log.debug({ prevSize, newSize }, "Classifying position event");
 
   if (prev === undefined && newSize !== 0) return "position_opened";
   if (prev !== undefined && newSize === 0 && prevSize !== 0)
@@ -758,13 +757,7 @@ function classifyPositionEvent(
 }
 
 async function handlePositionItem(userId: string, item: any) {
-  console.log(
-    `🚗🚗🚗🚗🚗🚗🚗 item: ${JSON.stringify(item)}, please ignore if undefined ${item == undefined}`,
-  );
   if (item?.status === "success") {
-    console.log(
-      `NGECEK ITEM STATUS SUCCESS NGGAK ${JSON.stringify(item)}, :::::: item?.status === 'success'????? ::::${item?.status === "success"}`,
-    );
     return;
   }
   // compute a convenient key (contract:mode) same as when you save
@@ -796,12 +789,8 @@ async function handlePositionItem(userId: string, item: any) {
   //   orderBy: desc(trades.created_at),
   // });
 
-  console.log(
-    `🚀🚀🚀🚀🚀🚀🚀🚀 getting previous position data for user:${userId}:positions positionKey: ${positionKey}: ${JSON.stringify(prev, null, 2)}🚀🚀🚀🚀🚀🚀🚀🚀`,
-  );
-
   const event = classifyPositionEvent(item, prev);
-  console.log("🧭 position event:", event, "for", positionKey);
+  log.debug({ event, positionKey }, "Position event");
 
   // now business logic
   switch (event) {
@@ -826,7 +815,7 @@ async function handlePositionItem(userId: string, item: any) {
       });
 
       if (!exchange) {
-        console.warn(`[Gate WS] No exchange record for user ${item.user} — skipping position_closed update`);
+        log.warn({ userId: item.user }, "No exchange record — skipping position_closed update");
         await redis.hdel(`user:${userId}:positions`, positionKey);
         break;
       }
@@ -844,7 +833,7 @@ async function handlePositionItem(userId: string, item: any) {
         );
 
       if (matchingTrades.length === 0) {
-        console.warn(`[Gate WS] Position closed for ${item.contract} but no matching waiting_targets trade found`);
+        log.warn({ contract: item.contract }, "Position closed but no matching waiting_targets trade found");
         await redis.hdel(`user:${userId}:positions`, positionKey);
         break;
       }
@@ -870,7 +859,8 @@ async function handlePositionItem(userId: string, item: any) {
         }
       });
 
-      console.log(`[Gate WS] Position closed — updated ${matchingTrades.length} trade(s) for ${item.contract}, total PnL=${totalPnl}`);
+      log.info({ contract: item.contract, tradeCount: matchingTrades.length, totalPnl }, "Position closed — trades updated");
+      tradesClosedTotal.inc({ exchange: "gate" });
 
       await redis.hdel(`user:${userId}:positions`, positionKey);
       break;

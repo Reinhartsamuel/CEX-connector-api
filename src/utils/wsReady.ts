@@ -1,4 +1,7 @@
 import Redis from "ioredis";
+import { createLogger } from "./logger";
+
+const log = createLogger({ process: 'ws-ready' });
 
 /**
  * Channel naming convention for WS ready signals.
@@ -32,7 +35,7 @@ export async function waitForWsReady(
     const timer = setTimeout(() => {
       if (!settled) {
         settled = true;
-        console.log(`[wsReady] Timeout waiting for ${channel} (${timeoutMs}ms) — proceeding anyway`);
+        log.warn({ channel, timeoutMs }, 'Timeout waiting for ws-ready — proceeding anyway');
         subscriber.unsubscribe(channel).catch(() => {});
         subscriber.quit().catch(() => {});
         resolve(false);
@@ -41,7 +44,7 @@ export async function waitForWsReady(
 
     subscriber.subscribe(channel, (err) => {
       if (err) {
-        console.error(`[wsReady] Failed to subscribe to ${channel}:`, err);
+        log.error({ err, channel }, 'Failed to subscribe to ws-ready channel');
         if (!settled) {
           settled = true;
           clearTimeout(timer);
@@ -55,7 +58,7 @@ export async function waitForWsReady(
       if (chan === channel && !settled) {
         settled = true;
         clearTimeout(timer);
-        console.log(`[wsReady] Received ready signal on ${channel}: ${msg}`);
+        log.debug({ channel, msg }, 'Received ws-ready signal');
         subscriber.unsubscribe(channel).catch(() => {});
         subscriber.quit().catch(() => {});
         resolve(true);
@@ -74,5 +77,5 @@ export async function publishWsReady(
 ): Promise<void> {
   const channel = wsReadyChannel(exchange, userId);
   await redis.publish(channel, JSON.stringify({ ready: true, ts: Date.now() }));
-  console.log(`[wsReady] Published ready signal on ${channel}`);
+  log.debug({ channel }, 'Published ws-ready signal');
 }

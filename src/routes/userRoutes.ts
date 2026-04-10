@@ -10,7 +10,12 @@ import { validationErrorHandler } from '../middleware/validationErrorHandler';
 import { signToken } from '../utils/jwt';
 import { setCookie } from 'hono/cookie';
 import { accountsQuerySchema, dashboardQuerySchema, loginSchema, tradesQuerySchema } from '../schemas/userSchemas';
-import { jwt } from 'hono/jwt'
+import { jwt } from 'hono/jwt';
+import { GateServices } from '../services/gateServices';
+import { OkxServices } from '../services/okxServices';
+import { createLogger } from '../utils/logger';
+
+const log = createLogger({ process: 'api', component: 'user-routes' });
 
 const userRouter = new Hono();
 
@@ -37,12 +42,47 @@ userRouter.get('/sse/orders/:userId', async (c) => {
 
 
 
+// POST /external/session - Mint Firebase custom token for cross-app authentication
+// Used by byscript-client to get a custom token that can be used in byscript-screener
+userRouter.post('/external/session', async (c) => {
+  try {
+    const { idToken } = await c.req.json();
+    
+    if (!idToken) {
+      return c.json({ success: false, error: 'Missing idToken' }, 400);
+    }
+    
+    // 1. Verify the incoming idToken
+    let decodedToken;
+    try {
+      decodedToken = await firebaseAuth.verifyIdToken(idToken);
+    } catch {
+      return c.json({ success: false, error: 'Invalid or expired token' }, 401);
+    }
+    
+    // 2. Create a custom token for the verified user
+    const customToken = await firebaseAuth.createCustomToken(decodedToken.uid);
+    
+    return c.json({ 
+      success: true, 
+      customToken,
+      uid: decodedToken.uid 
+    });
+  } catch (error) {
+    log.error({ err: error }, 'Failed to create custom token');
+    return c.json({ 
+      success: false, 
+      error: 'Failed to create session token' 
+    }, 500);
+  }
+});
+
 userRouter.post(
   '/login',
   zValidator('json', loginSchema, validationErrorHandler),
   async (c) => {
     const { idToken } = c.req.valid('json');
-    console.log('verifying idToken :::', idToken);
+    log.debug({}, 'Verifying idToken');
     // 1. Verify Firebase token
     let decodedToken;
     try {
@@ -316,7 +356,7 @@ userRouter.get('/accounts',
    async (c) => {
     const payload = c.get('jwtPayload');
     const user_id = payload.sub;
-    console.log(user_id,'user Id')
+    log.debug({ user_id }, 'user Id');
 
   // 1. Find the literal last time a snapshot was recorded for this user
   const latestEntry = await postgresDb
@@ -538,6 +578,7 @@ userRouter.post('/trading-plans',
 );
 
 // POST /autotraders — create one or more autotraders (one per pair)
+// Fetches contract_value_multiplier from exchange API and normalizes symbol format
 userRouter.post('/autotraders',
   jwt({ secret: process.env.JWT_SECRET! }),
   async (c) => {
@@ -547,18 +588,82 @@ userRouter.post('/autotraders',
 
     const { exchange_id, trading_plan_id, market, pairs } = body;
 
+    // Fetch exchange record to determine which exchange we're dealing with
+    const [exchange] = await postgresDb
+      .select()
+      .from(exchanges)
+      .where(eq(exchanges.id, exchange_id))
+      .limit(1);
+
+    if (!exchange) {
+      return c.json({ error: 'Exchange not found' }, 404);
+    }
+
+    // Process each pair: normalize symbol and fetch contract_value_multiplier
+    const processedPairs = await Promise.all(
+      pairs.map(async (p: {
+        symbol: string;
+        pair: string;
+        initial_investment: string;
+        leverage: number;
+        leverage_type: string;
+        margin_mode: string;
+        position_mode: string;
+      }) => {
+        let normalizedSymbol = p.symbol;
+        let contractValueMultiplier = '1'; // Default fallback
+
+        try {
+          if (exchange.exchange_title === 'gate') {
+            // Gate futures: normalize to BTC_USDT format, fetch quanto_multiplier
+            normalizedSymbol = normalizeGateSymbol(p.symbol, market);
+            const result = await fetchGateContractMultiplier(normalizedSymbol);
+            if (result.status === 'success' && result.data) {
+              contractValueMultiplier = result.data.quanto_multiplier;
+            } else {
+              throw new Error(`Gate contract not found: ${normalizedSymbol}`);
+            }
+          } else if (exchange.exchange_title === 'okx') {
+            // OKX: normalize to BTC-USDT-SWAP format, fetch ctVal
+            normalizedSymbol = normalizeOkxSymbol(p.symbol, market);
+            const result = await fetchOkxInstrumentMultiplier(normalizedSymbol);
+            if (result.status === 'success' && result.data) {
+              // For futures/swap use ctVal * ctMult (usually ctMult=1)
+              const ctVal = result.data.ctVal || '1';
+              const ctMult = result.data.ctMult || '1';
+              contractValueMultiplier = String(Number(ctVal) * Number(ctMult));
+            } else {
+              throw new Error(`OKX instrument not found: ${normalizedSymbol}`);
+            }
+          }
+          // For other exchanges (tokocrypto, hyperliquid, etc.), use default multiplier of 1
+          // They use base-asset quantity sizing, not contracts
+        } catch (err) {
+          log.error({ err, symbol: p.symbol }, 'Failed to fetch multiplier for autotrader');
+          return c.json({ 
+            error: `Failed to fetch contract details for ${p.symbol}. Ensure the symbol exists on ${exchange.exchange_title}.` 
+          }, 400);
+        }
+
+        return {
+          ...p,
+          symbol: normalizedSymbol,
+          contract_value_multiplier: contractValueMultiplier,
+        };
+      })
+    );
+
+    // If any pair failed, the error would have been returned already
+    // Check if all processed pairs have multipliers
+    const hasError = processedPairs.some(p => !p.contract_value_multiplier);
+    if (hasError) {
+      return c.json({ error: 'Failed to process all pairs' }, 400);
+    }
+
     const inserted = await postgresDb
       .insert(autotraders)
       .values(
-        pairs.map((p: {
-          symbol: string;
-          pair: string;
-          initial_investment: string;
-          leverage: number;
-          leverage_type: string;
-          margin_mode: string;
-          position_mode: string;
-        }) => ({
+        processedPairs.map((p) => ({
           user_id,
           exchange_id,
           trading_plan_id,
@@ -574,6 +679,7 @@ userRouter.post('/autotraders',
           position_mode: p.position_mode,
           status: 'stopped',
           webhook_token: crypto.randomUUID(),
+          contract_value_multiplier: p.contract_value_multiplier,
         }))
       )
       .returning();
@@ -581,6 +687,185 @@ userRouter.post('/autotraders',
     return c.json({ data: inserted }, 201);
   }
 );
+
+/**
+ * Normalize symbol to Gate's native format: BTC_USDT
+ * Handles variants: BTCUSDT, BTC/USDT, BTC-USDT, btc_usdt
+ */
+function normalizeGateSymbol(symbol: string, market?: string): string {
+  let normalized = symbol.toUpperCase();
+  // Replace common separators with underscore
+  normalized = normalized.replace(/[-/]/g, '_');
+  // Remove spaces
+  normalized = normalized.replace(/\s/g, '');
+  
+  // If it ends with USDT, USDC, BTC, ETH, BNB without separator, add underscore
+  if (/^(.+?)(USDT|USDC|BTC|ETH|BNB)$/.test(normalized)) {
+    normalized = normalized.replace(/^(.+?)(USDT|USDC|BTC|ETH|BNB)$/, '$1_$2');
+  }
+  
+  // For futures market, ensure we have the base quote format
+  if (market === 'futures' && !normalized.includes('_')) {
+    // Try to split common patterns
+    if (normalized.includes('USDT')) {
+      normalized = normalized.replace('USDT', '_USDT');
+    }
+  }
+  
+  return normalized;
+}
+
+/**
+ * Normalize symbol to OKX's native format:
+ * - Spot: BTC-USDT
+ * - Futures/Swap: BTC-USDT-SWAP
+ */
+function normalizeOkxSymbol(symbol: string, market?: string): string {
+  let normalized = symbol.toUpperCase();
+  // Replace underscores and slashes with dashes
+  normalized = normalized.replace(/[_/\s]/g, '-');
+  
+  // Remove any existing -SWAP suffix to rebuild correctly
+  normalized = normalized.replace(/-SWAP$/, '');
+  
+  // Add SWAP suffix for futures market
+  if (market === 'futures') {
+    if (!normalized.endsWith('-SWAP')) {
+      normalized += '-SWAP';
+    }
+  }
+  
+  // Ensure proper dash separation for spot
+  if (market === 'spot' || !market) {
+    // Handle cases like BTCUSDT -> BTC-USDT
+    if (/^(.+?)(USDT|USDC|BTC|ETH|BNB)$/.test(normalized)) {
+      normalized = normalized.replace(/^(.+?)(USDT|USDC|BTC|ETH|BNB)$/, '$1-$2').replace(/-SWAP$/, '');
+    }
+  }
+  
+  return normalized;
+}
+
+/**
+ * Fetch contract details from Gate.io API
+ * Returns quanto_multiplier for contract sizing
+ */
+async function fetchGateContractMultiplier(contract: string): Promise<{
+  status: 'success' | 'error';
+  data?: { quanto_multiplier: string };
+  message?: string;
+}> {
+  try {
+    // Use a temporary creds-free call structure
+    // Note: Gate's GET /api/v4/futures/usdt/contracts/{contract} is public
+    const baseUrl = 'https://api.gateio.ws';
+    const urlPath = `/api/v4/futures/usdt/contracts/${encodeURIComponent(contract)}`;
+    
+    const response = await fetch(`${baseUrl}${urlPath}`, {
+      method: 'GET',
+      headers: {
+        'Content-Type': 'application/json',
+        'ACCEPT': 'application/json',
+      },
+    });
+
+    if (!response.ok) {
+      const errorText = await response.text();
+      return {
+        status: 'error',
+        message: errorText || `HTTP ${response.status}`,
+      };
+    }
+
+    const responseText = await response.text();
+    const contractData = JSON.parse(responseText);
+    
+    // Gate returns: { name: 'BTC_USDT', quanto_multiplier: '0.0001', ... }
+    if (contractData && typeof contractData.quanto_multiplier === 'string') {
+      return {
+        status: 'success',
+        data: {
+          quanto_multiplier: contractData.quanto_multiplier,
+        },
+      };
+    }
+    
+    return {
+      status: 'error',
+      message: 'Invalid contract data format',
+    };
+  } catch (err) {
+    log.error({ err }, 'fetchGateContractMultiplier failed');
+    return {
+      status: 'error',
+      message: err instanceof Error ? err.message : 'Unknown error',
+    };
+  }
+}
+
+/**
+ * Fetch instrument details from OKX API
+ * Returns ctVal and ctMult for contract sizing
+ */
+async function fetchOkxInstrumentMultiplier(instId: string): Promise<{
+  status: 'success' | 'error';
+  data?: { ctVal?: string; ctMult?: string; instType: string };
+  message?: string;
+}> {
+  try {
+    // Determine instType from instId format
+    let instType = 'SPOT';
+    if (instId.endsWith('-SWAP') || instId.endsWith('-FUTURES')) {
+      instType = instId.includes('SWAP') ? 'SWAP' : 'FUTURES';
+    }
+    
+    const baseUrl = 'https://www.okx.com';
+    const requestPath = `/api/v5/public/instruments?instType=${instType}&instId=${encodeURIComponent(instId)}`;
+    
+    const response = await fetch(`${baseUrl}${requestPath}`, {
+      method: 'GET',
+      headers: {
+        'Content-Type': 'application/json',
+        'ACCEPT': 'application/json',
+      },
+    });
+
+    if (!response.ok) {
+      const errorText = await response.text();
+      return {
+        status: 'error',
+        message: errorText || `HTTP ${response.status}`,
+      };
+    }
+
+    const responseText = await response.text();
+    const parsed = JSON.parse(responseText);
+    
+    // OKX returns { code: '0', data: [...] } on success
+    if (parsed.code === '0' && Array.isArray(parsed.data) && parsed.data.length > 0) {
+      const instrument = parsed.data[0];
+      return {
+        status: 'success',
+        data: {
+          ctVal: instrument.ctVal,
+          ctMult: instrument.ctMult,
+          instType: instrument.instType,
+        },
+      };
+    }
+    
+    return {
+      status: 'error',
+      message: 'Instrument not found',
+    };
+  } catch (err) {
+    log.error({ err }, 'fetchOkxInstrumentMultiplier failed');
+    return {
+      status: 'error',
+      message: err instanceof Error ? err.message : 'Unknown error',
+    };
+  }
+}
 
 // GET /autotraders/:id — get a single autotrader with trade stats
 userRouter.get('/autotraders/:id',
@@ -830,7 +1115,7 @@ userRouter.get('/sse/trades',
               .limit(50);
             send({ type: 'trades', data: results });
           } catch (err) {
-            console.error('[SSE /sse/trades] DB fetch error:', err);
+            log.error({ err }, 'SSE trades DB fetch error');
           }
         });
 
@@ -899,7 +1184,7 @@ userRouter.get('/sse/autotraders/:id/trades',
               .limit(10);
             send({ type: 'trades', data: results });
           } catch (err) {
-            console.error('[SSE /sse/autotraders/:id/trades] DB fetch error:', err);
+            log.error({ err }, 'SSE autotrader trades DB fetch error');
           }
         });
 

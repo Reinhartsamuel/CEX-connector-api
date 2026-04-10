@@ -8,6 +8,9 @@ module.exports = {
       autorestart: true,
       max_memory_restart: '512M',
       exp_backoff_restart_delay: 100,
+      merge_logs: true,
+      log_type: 'json',
+      env: { PM2_APP_NAME: 'api' },
     },
     {
       name: 'worker-gate',
@@ -17,6 +20,9 @@ module.exports = {
       autorestart: true,
       max_memory_restart: '512M',
       exp_backoff_restart_delay: 100,
+      merge_logs: true,
+      log_type: 'json',
+      env: { PM2_APP_NAME: 'worker-gate' },
     },
     {
       name: 'worker-okx',
@@ -26,6 +32,9 @@ module.exports = {
       autorestart: true,
       max_memory_restart: '512M',
       exp_backoff_restart_delay: 100,
+      merge_logs: true,
+      log_type: 'json',
+      env: { PM2_APP_NAME: 'worker-okx' },
     },
     {
       name: 'worker-hyperliquid',
@@ -35,6 +44,9 @@ module.exports = {
       autorestart: true,
       max_memory_restart: '512M',
       exp_backoff_restart_delay: 100,
+      merge_logs: true,
+      log_type: 'json',
+      env: { PM2_APP_NAME: 'worker-hyperliquid' },
     },
     {
       name: 'worker-tokocrypto',
@@ -42,8 +54,11 @@ module.exports = {
       interpreter: 'bun',
       watch: false,
       autorestart: true,
-      max_memory_residual: '512M',
+      max_memory_restart: '512M',
       exp_backoff_restart_delay: 100,
+      merge_logs: true,
+      log_type: 'json',
+      env: { PM2_APP_NAME: 'worker-tokocrypto' },
     },
     {
       name: 'worker-bitget',
@@ -53,6 +68,9 @@ module.exports = {
       autorestart: true,
       max_memory_restart: '512M',
       exp_backoff_restart_delay: 100,
+      merge_logs: true,
+      log_type: 'json',
+      env: { PM2_APP_NAME: 'worker-bitget' },
     },
     {
       name: 'worker-mexc',
@@ -62,6 +80,9 @@ module.exports = {
       autorestart: true,
       max_memory_restart: '512M',
       exp_backoff_restart_delay: 100,
+      merge_logs: true,
+      log_type: 'json',
+      env: { PM2_APP_NAME: 'worker-mexc' },
     },
     {
       name: 'worker-bitmart',
@@ -71,6 +92,9 @@ module.exports = {
       autorestart: true,
       max_memory_restart: '512M',
       exp_backoff_restart_delay: 100,
+      merge_logs: true,
+      log_type: 'json',
+      env: { PM2_APP_NAME: 'worker-bitmart' },
     },
     {
       name: 'reconcile-cron',
@@ -80,6 +104,9 @@ module.exports = {
       autorestart: true,
       max_memory_restart: '256M',
       exp_backoff_restart_delay: 100,
+      merge_logs: true,
+      log_type: 'json',
+      env: { PM2_APP_NAME: 'reconcile-cron' },
     },
   ],
 };

@@ -13,6 +13,9 @@ import {
 } from "../../utils/cryptography/kmsUtils";
 import { gatePlaceFuturesOrdersSchema } from "../../schemas/gateSchemas";
 import { redis } from "../../db/redis";
+import { createLogger } from '../../utils/logger';
+
+const log = createLogger({ exchange: 'hyperliquid', process: 'handler' });
 
 export const HyperliquidHandler = {
   /**
@@ -65,9 +68,7 @@ export const HyperliquidHandler = {
       }
 
       // Optional: Log the link for debugging
-      console.log(
-        `Linking Agent [${HyperliquidServices.account.address}] to Master [${master_wallet_address}]`,
-      );
+      log.debug({ agent: HyperliquidServices.account.address, master: master_wallet_address }, 'Linking agent to master');
 
       // 3. Check Account Existence (clearinghouseState) via /info endpoint
       // We check the MASTER wallet to ensure the user has funds/account on L1
@@ -149,7 +150,7 @@ export const HyperliquidHandler = {
         account_status: "verified",
       });
     } catch (e: any) {
-      console.error(e, "ERROR REGISTER USER hyperliquid");
+      log.error({ err: e }, 'ERROR REGISTER USER hyperliquid');
       return c.json(
         { message: "Internal Server Error", error: e.message },
         500,
@@ -183,7 +184,7 @@ export const HyperliquidHandler = {
       HyperliquidServices.clearCredentials();
       return c.json(res);
     } catch (e: any) {
-      console.error(e, "ERROR 500 PLAYGROUND hyperliquid");
+      log.error({ err: e }, 'ERROR 500 PLAYGROUND hyperliquid');
       return c.json({ message: "ERROR", error: e.message }, 500);
     }
   },
@@ -213,7 +214,7 @@ export const HyperliquidHandler = {
       const assetMeta = await HyperliquidServices.getAssetMetadata(
         body.contract,
       );
-      console.log(assetMeta, "assetMeta");
+      log.debug({ data: assetMeta }, 'assetMeta');
 
       let price = String(body.price);
       const isBuy = body.position_type === "long";
@@ -241,7 +242,7 @@ export const HyperliquidHandler = {
         body.leverage || 1,
         body.leverage_type === "CROSS", // boolean isCross
       );
-      console.log(resLeverage, "resLeverage");
+      log.debug({ data: resLeverage }, 'resLeverage');
 
       // 4. Calculate and Format Size
       // body.size is USD amount to trade
@@ -263,7 +264,7 @@ export const HyperliquidHandler = {
         price: String(parseFloat(price)),
         reduce_only: body.reduce_only,
       });
-      console.log(JSON.stringify(resPlaceOrder, null, 2), "resPlaceOrder");
+      log.debug({ data: resPlaceOrder }, 'resPlaceOrder');
 
       // Clear credentials from service
       HyperliquidServices.clearCredentials();
@@ -319,7 +320,7 @@ export const HyperliquidHandler = {
           (resPlaceOrder?.response?.data?.statuses?.[0] as any)?.filled?.avgPx;
         addData.open_filled_at = Math.floor(Date.now() / 1000);
       }
-      console.log(addData, "addData");
+      log.debug({ data: addData }, 'addData');
 
       const newTrade = await postgresDb
         .insert(trades)
@@ -342,12 +343,12 @@ export const HyperliquidHandler = {
         })
       );
 
-      console.log(`📡 Triggered Hyperliquid worker for user ${user_id} (address: ${wallet_address})`);
+      log.info({}, '📡 Triggered Hyperliquid worker for user ${user_id} (address: ${wallet_address})');
 
       allReturn.data = { resPlaceOrder, newTrade };
       return c.json(allReturn);
     } catch (e: any) {
-      console.error(e, "ERROR order hyperliquid");
+      log.error({ err: e }, 'ERROR order hyperliquid');
       return c.json({ message: "ERROR", error: e.message }, 500);
     }
   },
@@ -375,7 +376,7 @@ export const HyperliquidHandler = {
         ),
       });
 
-      console.log(foundTrades,'foundTrades')
+      log.debug({ data: foundTrades }, 'foundTrades')
 
       if (foundTrades.length === 0) {
         return c.json({ message: "No active resting trades found to cancel" });
@@ -421,7 +422,7 @@ export const HyperliquidHandler = {
 closePositionDb: async function (c: Context) {
     try {
       const body = await c.req.json();
-      console.log(`[CLOSE] Request for Contract: ${body.contract}, Autotrader: ${body.autotrader_id}`);
+      log.info({}, '[CLOSE] Request for Contract: ${body.contract}, Autotrader: ${body.autotrader_id}');
 
       let { agent_private_key, wallet_address } = await HyperliquidHandler.unwrapCredentials(body.exchange_id);
 
@@ -439,13 +440,13 @@ closePositionDb: async function (c: Context) {
       });
 
       if (!activeTrade) {
-        console.log("[CLOSE] No active trade found in DB.");
+        log.info({}, '[CLOSE] No active trade found in DB.');
         HyperliquidServices.clearCredentials();
         return c.json({ message: "No active 'waiting_targets' trade found." }, 404);
       }
 
       // 2. GET POSITION & CURRENT PRICES
-      console.log(`[CLOSE] Fetching Position & Market Prices...`);
+      log.info({}, '[CLOSE] Fetching Position & Market Prices...');
       
       const [accountState, allMids] = await Promise.all([
          HyperliquidServices.whitelistedRequest({
@@ -465,11 +466,11 @@ closePositionDb: async function (c: Context) {
         (p: any) => p.position.coin === cleanSymbol
       );
 
-      console.log(position, "position");
+      log.debug({ data: position }, 'position');
 
       // 3. Validate Position Exists
       if (!position || parseFloat(position.position.szi) === 0) {
-        console.log("[CLOSE] Position already closed on-chain.");
+        log.info({}, '[CLOSE] Position already closed on-chain.');
         await postgresDb
           .update(trades)
           .set({ status: "closed", closed_at: new Date(), close_reason: "already_closed_on_chain" })
@@ -516,7 +517,7 @@ closePositionDb: async function (c: Context) {
          throw new Error(`Price Calculation Failed. Market: ${currentMarketPrice}, Target: ${targetPrice}`);
       }
 
-      console.log(`[CLOSE] Closing ${formattedSize} ${cleanSymbol}. Entry: ${entryPrice}, Target: ${formattedPrice}`);
+      log.info({}, '[CLOSE] Closing ${formattedSize} ${cleanSymbol}. Entry: ${entryPrice}, Target: ${formattedPrice}');
 
       // 7. Execute Close
       const res = await HyperliquidServices.placeOrder({
@@ -533,7 +534,7 @@ closePositionDb: async function (c: Context) {
       
       // Error Check
       if (orderStatus && typeof orderStatus === "object" && "error" in orderStatus) {
-        console.error("[CLOSE] API Error:", orderStatus.error);
+        log.error({ error: orderStatus.error }, '[CLOSE] API Error');
         HyperliquidServices.clearCredentials();
         return c.json({ message: "Failed to close", error: orderStatus.error, res }, 400);
       }
@@ -556,7 +557,7 @@ closePositionDb: async function (c: Context) {
          const rawPnl = priceDiff * sizeToClose * directionMultiplier;
          realizedPnl = rawPnl.toFixed(6); // Store as string for numeric/decimal column
          
-         console.log(`[PNL] Entry: ${entryPrice}, Exit: ${exitPrice}, Size: ${sizeToClose}, PnL: ${realizedPnl}`);
+         log.info({}, '[PNL] Entry: ${entryPrice}, Exit: ${exitPrice}, Size: ${sizeToClose}, PnL: ${realizedPnl}');
       }
       // --- PNL CALCULATION END ---
 
@@ -583,7 +584,7 @@ closePositionDb: async function (c: Context) {
       });
 
     } catch (e: any) {
-      console.error(e, "ERROR closePositionDb");
+      log.error({ err: e }, 'ERROR closePositionDb');
       return c.json({ message: "ERROR", error: e.message }, 500);
     }
   },
