@@ -25,6 +25,7 @@ interface UserConnection {
   ws: WebSocket | null;
   pingInterval?: NodeJS.Timeout;
   backoff: number;
+  intentionalClose?: boolean;
   contracts: Set<string>;
 }
 const connections = new Map<string, UserConnection>();
@@ -210,7 +211,8 @@ function closeConnection(userId: string) {
   log.info({ userId }, 'Closing WebSocket connection');
 
   if (state.pingInterval) clearInterval(state.pingInterval);
-  if (state.ws) state.ws.terminate();
+  state.intentionalClose = true;
+  if (state.ws) state.ws.close();
   connections.delete(userId);
 }
 
@@ -322,8 +324,15 @@ function onWsClose(userId: string, code: number, reason: Buffer) {
 
   if (state.pingInterval) clearInterval(state.pingInterval);
 
+  const isIntentionalClose = !!state.intentionalClose;
+
   state.ws = null;
   connections.delete(userId);
+
+  if (isIntentionalClose) {
+    log.info({ userId }, 'WebSocket closed intentionally; skipping reconnect');
+    return;
+  }
 
   const delay = state.backoff;
   state.backoff = Math.min(state.backoff * 1.5, 60_000);

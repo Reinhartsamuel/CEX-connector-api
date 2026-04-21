@@ -3,6 +3,7 @@
   "scripts": {
     "dev": "bun run --hot src/index.ts",
     "start": "pm2-runtime ecosystem.config.js",
+    "start:worker-manager": "bun src/workers/index.ts",
     "db:generate": "drizzle-kit generate",
     "db:push": "drizzle-kit push",
     "db:studio": "drizzle-kit studio",

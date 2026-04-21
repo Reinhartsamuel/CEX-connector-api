@@ -25,6 +25,7 @@ interface OkxConnection {
   ws: WebSocket | null;
   pingInterval?: NodeJS.Timeout;
   backoff: number;
+  intentionalClose?: boolean;
   loggedIn: boolean;
 }
 const connections = new Map<string, OkxConnection>();
@@ -315,9 +316,16 @@ function onWsClose(userId: string, code: number, reason: Buffer) {
 
   if (state.pingInterval) clearInterval(state.pingInterval);
 
+  const isIntentionalClose = !!state.intentionalClose;
+
   state.ws = null;
   state.loggedIn = false;
   connections.delete(userId);
+
+  if (isIntentionalClose) {
+    log.info({ userId }, "WebSocket closed intentionally; skipping reconnect");
+    return;
+  }
 
   // Schedule reconnect with exponential backoff
   const delay = state.backoff;
@@ -338,6 +346,8 @@ function closeConnection(userId: string) {
   if (!st) return;
 
   if (st.pingInterval) clearInterval(st.pingInterval);
+
+  st.intentionalClose = true;
 
   if (st.ws && st.ws.readyState === WebSocket.OPEN) {
     st.ws.close();

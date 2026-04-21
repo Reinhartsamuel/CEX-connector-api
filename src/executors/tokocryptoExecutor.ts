@@ -42,8 +42,17 @@ async function openPosition(ctx: ExecutorContext): Promise<ExecutorResult> {
   const isMarket = order_type === 'market';
 
   await redis.xadd(
+    'ws-control', '*',
+    'op', 'open',
+    'exchange', 'tokocrypto',
+    'userId', String(exchange_user_id),
+    'contract', contract,
+  );
+
+  await redis.xadd(
     'ws-control:tokocrypto', '*',
     'op', 'open',
+    'exchange', 'tokocrypto',
     'userId', String(exchange_user_id),
     'contract', contract,
   );

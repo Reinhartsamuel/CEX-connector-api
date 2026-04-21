@@ -806,15 +806,20 @@ async function reconcileBitmart(exchangeId: number, userId: string): Promise<num
 
 const EXCHANGES = ["gate", "okx", "hyperliquid", "tokocrypto", "bitget", "mexc", "bitmart"];
 
-log.info({ interval_ms: RECONCILE_INTERVAL_MS, exchanges: EXCHANGES }, 'ReconcileCron starting');
+export function startReconcileCron() {
+  log.info({ interval_ms: RECONCILE_INTERVAL_MS, exchanges: EXCHANGES }, 'ReconcileCron starting');
 
-// Run immediately on startup, then on interval
-for (const exchange of EXCHANGES) {
-  runReconcile(exchange);
-}
-
-setInterval(() => {
   for (const exchange of EXCHANGES) {
     runReconcile(exchange);
   }
-}, RECONCILE_INTERVAL_MS);
+
+  return setInterval(() => {
+    for (const exchange of EXCHANGES) {
+      runReconcile(exchange);
+    }
+  }, RECONCILE_INTERVAL_MS);
+}
+
+if (import.meta.main) {
+  startReconcileCron();
+}

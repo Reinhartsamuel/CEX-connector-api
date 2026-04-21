@@ -24,6 +24,7 @@ interface HyperliquidConnection {
   ws: WebSocket | null;
   pingInterval?: NodeJS.Timeout;
   backoff: number;
+  intentionalClose?: boolean;
   userAddress: string; // Master wallet address
 }
 
@@ -296,9 +297,16 @@ function onWsClose(userId: string, code: number, reason: Buffer) {
 
   if (state.pingInterval) clearInterval(state.pingInterval);
 
+  const isIntentionalClose = !!state.intentionalClose;
+
   // Mark connection as dead
   state.ws = null;
   connections.delete(userId);
+
+  if (isIntentionalClose) {
+    log.info({ userId }, 'WebSocket closed intentionally; skipping reconnect');
+    return;
+  }
 
   // Schedule reconnection with exponential backoff
   const delay = state.backoff;
@@ -320,6 +328,8 @@ function closeConnection(userId: string) {
   if (!st) return;
 
   if (st.pingInterval) clearInterval(st.pingInterval);
+
+  st.intentionalClose = true;
 
   if (st.ws && st.ws.readyState === WebSocket.OPEN) {
     st.ws.close();

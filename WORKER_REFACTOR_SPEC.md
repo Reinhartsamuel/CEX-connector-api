@@ -1,7 +1,7 @@
 # Worker Architecture Refactor Spec
 ## Single WorkerManager with Pluggable Exchange Adapters
 
-**Goal:** Replace 4 separate worker processes with one unified `WorkerManager` process that
+**Goal:** Replace 4 (by this time this number may already be higher) separate worker processes with one unified `WorkerManager` process that
 hosts all exchange adapters. Modeled after how 3Commas and Pionex handle multi-exchange
 connectivity: shared infrastructure, isolated adapter logic, production-grade reliability.
 

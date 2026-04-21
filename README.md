@@ -13,7 +13,7 @@ Think 3Commas or Pionex — but open-source and running on your own infrastructu
 - Track trade lifecycle: from order placement through fill to position close
 - Manage multiple exchange accounts per user, credentials encrypted with AWS KMS
 
-**Supported exchanges:** Gate.io, OKX, Hyperliquid, Tokocrypto
+**Supported exchanges:** Gate.io, OKX, Hyperliquid, Tokocrypto, Bitget, MEXC, BitMart
 
 ---
 
@@ -101,15 +101,12 @@ bun run db:push
 bun run src/index.ts
 ```
 
-**5. Start exchange workers** (in separate terminals or processes)
+**5. Start worker manager**
 ```bash
-bun src/workers/gateWorker.ts
-bun src/workers/okxWorker.ts
-bun src/workers/hyperliquidWorker.ts
-bun src/workers/tokocryptoWorker.ts
+bun run start:worker-manager
 ```
 
-Workers maintain persistent WebSocket connections to exchanges and update trade status in real time. They must run alongside the API server.
+WorkerManager runs all exchange adapters in one process, routes control commands, runs internal reconciliation, and serves worker health/metrics endpoints.
 
 Server runs on `http://localhost:1122` by default.
 
@@ -216,6 +213,18 @@ Compromising the database alone is not sufficient to recover API keys.
 **Tokocrypto** — implemented, lifecycle testing in progress
 - Binance Cloud infrastructure, follows Binance Futures API
 - Requires three pre-order calls: position mode, leverage, margin mode
+
+**Bitget** — implemented, lifecycle testing in progress
+- Uses CCXT + API passphrase
+- WebSocket-driven order/position updates
+
+**MEXC** — implemented, lifecycle testing in progress
+- Uses CCXT without passphrase
+- WebSocket-driven order/position updates
+
+**BitMart** — implemented, lifecycle testing in progress
+- Uses CCXT + memo/uid passphrase
+- WebSocket-driven order/position updates
 
 ---
 

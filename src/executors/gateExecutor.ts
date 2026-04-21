@@ -61,8 +61,17 @@ async function openPosition(ctx: ExecutorContext): Promise<ExecutorResult> {
   // before the WS worker has subscribed to order/position events.
   // Worker decrypts credentials from DB via KMS — no plaintext in Redis.
   await redis.xadd(
+    'ws-control', '*',
+    'op', 'open',
+    'exchange', 'gate',
+    'userId', String(exchange_user_id),
+    'contract', contract,
+  );
+
+  await redis.xadd(
     'ws-control:gate', '*',
     'op', 'open',
+    'exchange', 'gate',
     'userId', String(exchange_user_id),
     'contract', contract,
   );

@@ -43,8 +43,17 @@ async function openPosition(ctx: ExecutorContext): Promise<ExecutorResult> {
 
   // Publish to Redis Stream for WS worker
   await redis.xadd(
+    'ws-control', '*',
+    'op', 'open',
+    'exchange', 'bitget',
+    'userId', String(exchange_user_id),
+    'contract', contract,
+  );
+
+  await redis.xadd(
     'ws-control:bitget', '*',
     'op', 'open',
+    'exchange', 'bitget',
     'userId', String(exchange_user_id),
     'contract', contract,
   );

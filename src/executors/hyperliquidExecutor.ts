@@ -42,8 +42,18 @@ async function openPosition(ctx: ExecutorContext): Promise<ExecutorResult> {
   const isMarket = order_type === 'market';
 
   await redis.xadd(
+    'ws-control', '*',
+    'op', 'open',
+    'exchange', 'hyperliquid',
+    'userId', String(exchange_user_id),
+    'userAddress', String(exchange_user_id), // Hyperliquid worker needs wallet address
+    'contract', symbol,
+  );
+
+  await redis.xadd(
     'ws-control:hyperliquid', '*',
     'op', 'open',
+    'exchange', 'hyperliquid',
     'userId', String(exchange_user_id),
     'userAddress', String(exchange_user_id), // Hyperliquid worker needs wallet address
     'contract', symbol,

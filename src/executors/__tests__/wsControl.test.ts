@@ -98,6 +98,41 @@ mock.module("../../services/tokocryptoServices", () => ({
   },
 }));
 
+// ---- Mock: BitgetServices ----
+mock.module("../../services/bitgetServices", () => ({
+  BitgetServices: {
+    initialize: () => {},
+    clearCredentials: () => {},
+    updateLeverage: async () => ({}),
+    updateMarginMode: async () => ({}),
+    placeOrder: async () => ({ id: "bitget-order-1", status: "closed", average: "50000" }),
+    mapCcxtStatusToDb: () => "waiting_targets",
+  },
+}));
+
+// ---- Mock: MexcServices ----
+mock.module("../../services/mexcServices", () => ({
+  MexcServices: {
+    initialize: () => {},
+    clearCredentials: () => {},
+    updateLeverage: async () => ({}),
+    updateMarginMode: async () => ({}),
+    placeOrder: async () => ({ id: "mexc-order-1", status: "closed", average: "50000" }),
+    mapCcxtStatusToDb: () => "waiting_targets",
+  },
+}));
+
+// ---- Mock: BitmartServices ----
+mock.module("../../services/bitmartServices", () => ({
+  BitmartServices: {
+    initialize: () => {},
+    clearCredentials: () => {},
+    updateLeverage: async () => ({}),
+    placeOrder: async () => ({ id: "bitmart-order-1", status: "closed", average: "50000" }),
+    mapCcxtStatusToDb: () => "waiting_targets",
+  },
+}));
+
 // ---- Mock: wsReady ----
 mock.module("../../utils/wsReady", () => ({
   waitForWsReady: async () => {},
@@ -115,6 +150,7 @@ function makeCtx(exchangeUserId: string, symbol: string) {
       leverage: 10,
       leverage_type: "ISOLATED",
       initial_investment: "1",
+      contract_value_multiplier: "1",
       status: "active",
     } as any,
     exchange: { id: 1, exchange_title: "gate" } as any,
@@ -123,7 +159,7 @@ function makeCtx(exchangeUserId: string, symbol: string) {
     api_passphrase: "test-passphrase",
     exchange_user_id: exchangeUserId,
     action: "BUY" as const,
-    overrides: { order_type: "market" as const },
+    overrides: { order_type: "market" as const, market_price: 50000 },
   };
 }
 
@@ -134,62 +170,113 @@ beforeEach(() => {
 // ============================================================
 // Gate
 // ============================================================
-test("GateExecutor writes to ws-control:gate stream with op=open", async () => {
+test("GateExecutor writes to global and legacy streams with exchange field", async () => {
   const { GateExecutor } = await import("../gateExecutor");
   const ctx = makeCtx("gate-user-123", "BTC_USDT");
 
   await GateExecutor.execute(ctx);
 
-  const msg = streamMessages.find((m) => m.stream === "ws-control:gate");
-  expect(msg).toBeDefined();
-  expect(msg!.fields.op).toBe("open");
-  expect(msg!.fields.userId).toBe("gate-user-123");
+  const globalMsg = streamMessages.find((m) => m.stream === "ws-control");
+  const legacyMsg = streamMessages.find((m) => m.stream === "ws-control:gate");
+
+  expect(globalMsg).toBeDefined();
+  expect(globalMsg!.fields.op).toBe("open");
+  expect(globalMsg!.fields.exchange).toBe("gate");
+  expect(globalMsg!.fields.userId).toBe("gate-user-123");
+
+  expect(legacyMsg).toBeDefined();
+  expect(legacyMsg!.fields.exchange).toBe("gate");
 });
 
 // ============================================================
 // OKX
 // ============================================================
-test("OkxExecutor writes to ws-control:okx stream with op=open", async () => {
+test("OkxExecutor writes exchange-routable global control message", async () => {
   const { OkxExecutor } = await import("../okxExecutor");
   const ctx = makeCtx("okx-user-456", "BTC-USDT-SWAP");
 
   await OkxExecutor.execute(ctx);
 
-  const msg = streamMessages.find((m) => m.stream === "ws-control:okx");
-  expect(msg).toBeDefined();
-  expect(msg!.fields.op).toBe("open");
-  expect(msg!.fields.userId).toBe("okx-user-456");
+  const globalMsg = streamMessages.find((m) => m.stream === "ws-control" && m.fields.exchange === "okx");
+  expect(globalMsg).toBeDefined();
+  expect(globalMsg!.fields.op).toBe("open");
+  expect(globalMsg!.fields.userId).toBe("okx-user-456");
 });
 
 // ============================================================
 // Hyperliquid
 // ============================================================
-test("HyperliquidExecutor writes to ws-control:hyperliquid stream with op=open", async () => {
+test("HyperliquidExecutor writes exchange-routable global control message", async () => {
   const { HyperliquidExecutor } = await import("../hyperliquidExecutor");
   const ctx = makeCtx("0xWalletAddress", "BTC");
 
   await HyperliquidExecutor.execute(ctx);
 
-  const msg = streamMessages.find((m) => m.stream === "ws-control:hyperliquid");
-  expect(msg).toBeDefined();
-  expect(msg!.fields.op).toBe("open");
-  expect(msg!.fields.userId).toBe("0xWalletAddress");
-  expect(msg!.fields.userAddress).toBe("0xWalletAddress");
+  const globalMsg = streamMessages.find((m) => m.stream === "ws-control" && m.fields.exchange === "hyperliquid");
+  expect(globalMsg).toBeDefined();
+  expect(globalMsg!.fields.op).toBe("open");
+  expect(globalMsg!.fields.userId).toBe("0xWalletAddress");
+  expect(globalMsg!.fields.userAddress).toBe("0xWalletAddress");
 });
 
 // ============================================================
 // Tokocrypto
 // ============================================================
-test("TokocryptoExecutor writes to ws-control:tokocrypto stream with op=open", async () => {
+test("TokocryptoExecutor writes exchange-routable global control message", async () => {
   const { TokocryptoExecutor } = await import("../tokocryptoExecutor");
   const ctx = makeCtx("toko-user-789", "BTC/USDT");
 
   await TokocryptoExecutor.execute(ctx);
 
-  const msg = streamMessages.find((m) => m.stream === "ws-control:tokocrypto");
-  expect(msg).toBeDefined();
-  expect(msg!.fields.op).toBe("open");
-  expect(msg!.fields.userId).toBe("toko-user-789");
+  const globalMsg = streamMessages.find((m) => m.stream === "ws-control" && m.fields.exchange === "tokocrypto");
+  expect(globalMsg).toBeDefined();
+  expect(globalMsg!.fields.op).toBe("open");
+  expect(globalMsg!.fields.userId).toBe("toko-user-789");
+});
+
+// ============================================================
+// Bitget
+// ============================================================
+test("BitgetExecutor writes exchange-routable global control message", async () => {
+  const { BitgetExecutor } = await import("../bitgetExecutor");
+  const ctx = makeCtx("bitget-user-001", "BTC/USDT:USDT");
+
+  await BitgetExecutor.execute(ctx);
+
+  const globalMsg = streamMessages.find((m) => m.stream === "ws-control" && m.fields.exchange === "bitget");
+  expect(globalMsg).toBeDefined();
+  expect(globalMsg!.fields.op).toBe("open");
+  expect(globalMsg!.fields.userId).toBe("bitget-user-001");
+});
+
+// ============================================================
+// MEXC
+// ============================================================
+test("MexcExecutor writes exchange-routable global control message", async () => {
+  const { MexcExecutor } = await import("../mexcExecutor");
+  const ctx = makeCtx("mexc-user-002", "BTC_USDT");
+
+  await MexcExecutor.execute(ctx);
+
+  const globalMsg = streamMessages.find((m) => m.stream === "ws-control" && m.fields.exchange === "mexc");
+  expect(globalMsg).toBeDefined();
+  expect(globalMsg!.fields.op).toBe("open");
+  expect(globalMsg!.fields.userId).toBe("mexc-user-002");
+});
+
+// ============================================================
+// BitMart
+// ============================================================
+test("BitmartExecutor writes exchange-routable global control message", async () => {
+  const { BitmartExecutor } = await import("../bitmartExecutor");
+  const ctx = makeCtx("bitmart-user-003", "BTCUSDT");
+
+  await BitmartExecutor.execute(ctx);
+
+  const globalMsg = streamMessages.find((m) => m.stream === "ws-control" && m.fields.exchange === "bitmart");
+  expect(globalMsg).toBeDefined();
+  expect(globalMsg!.fields.op).toBe("open");
+  expect(globalMsg!.fields.userId).toBe("bitmart-user-003");
 });
 
 // ============================================================
@@ -201,6 +288,6 @@ test("GateExecutor does not write to ws-control stream on CLOSE", async () => {
 
   await GateExecutor.execute(ctx);
 
-  const msg = streamMessages.find((m) => m.stream === "ws-control:gate");
+  const msg = streamMessages.find((m) => m.fields.op === "open");
   expect(msg).toBeUndefined();
 });
