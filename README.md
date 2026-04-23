@@ -157,10 +157,10 @@ The API responds immediately with `200 OK`. Execution happens asynchronously.
 | `POST` | `/autotraders` | Create autotrader |
 | `GET` | `/user/trades` | Trade history |
 | `GET` | `/sse/trades` | Real-time trade updates (Server-Sent Events) |
-| `POST` | `/gate/connect` | Register Gate.io account |
-| `POST` | `/okx/connect` | Register OKX account |
-| `POST` | `/hyperliquid/connect` | Register Hyperliquid account |
-| `POST` | `/tokocrypto/connect` | Register Tokocrypto account |
+| `POST` | `/gate/register-user` | Register Gate.io account |
+| `POST` | `/okx/register-user` | Register OKX account |
+| `POST` | `/hyperliquid/register-user` | Register Hyperliquid account |
+| `POST` | `/tokocrypto/register-user` | Register Tokocrypto account |
 
 All routes except `/webhook/signal` and `/health` require a Firebase JWT: `Authorization: Bearer <token>`
 

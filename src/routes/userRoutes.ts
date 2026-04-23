@@ -4,8 +4,8 @@ import { zValidator } from '@hono/zod-validator';
 import { z } from 'zod';
 import { firebaseAuth } from '../utils/firebaseAdmin';
 import { postgresDb } from '../db/client';
-import { users, trades, exchanges, autotraders, user_balances_snapshots, trading_plans, trading_plan_pairs } from '../db/schema';
-import { and, eq, gte, lte, desc, sql, gt, isNotNull, inArray } from 'drizzle-orm';
+import { users, trades, exchanges, autotraders, user_balances_snapshots, trading_plans, trading_plan_pairs, trading_plan_keys } from '../db/schema';
+import { and, eq, gte, lte, desc, sql, gt, isNotNull, inArray, or } from 'drizzle-orm';
 import { validationErrorHandler } from '../middleware/validationErrorHandler';
 import { signToken } from '../utils/jwt';
 import { setCookie } from 'hono/cookie';
@@ -14,6 +14,7 @@ import { jwt } from 'hono/jwt';
 import { GateServices } from '../services/gateServices';
 import { OkxServices } from '../services/okxServices';
 import { createLogger } from '../utils/logger';
+import nodeCrypto from 'node:crypto';
 
 const log = createLogger({ process: 'api', component: 'user-routes' });
 
@@ -152,6 +153,130 @@ userRouter.post(
 
 
 
+// GET /accounts — list account cards data for authenticated user
+userRouter.get(
+  '/accounts',
+  jwt({ secret: process.env.JWT_SECRET! }),
+  async (c) => {
+    const payload = c.get('jwtPayload');
+    const user_id = Number(payload.sub);
+
+    // Anchor calculations to the latest snapshot timestamp for this user.
+    const latestEntry = await postgresDb
+      .select({ created_at: user_balances_snapshots.created_at })
+      .from(user_balances_snapshots)
+      .where(eq(user_balances_snapshots.user_id, user_id))
+      .orderBy(desc(user_balances_snapshots.created_at))
+      .limit(1);
+
+    if (latestEntry.length === 0) {
+      const userExchanges = await postgresDb
+        .select({
+          id: exchanges.id,
+          exchange_title: exchanges.exchange_title,
+          exchange_user_id: exchanges.exchange_user_id,
+          market_type: exchanges.market_type,
+        })
+        .from(exchanges)
+        .where(eq(exchanges.user_id, user_id));
+
+      const data = userExchanges.map((ex) => ({
+        ...ex,
+        value: 0,
+        change1D: 0,
+        change7D: 0,
+        change30D: 0,
+        autotraderCount: 0,
+        assets: [{ color: '#4ade80', pct: 100 }],
+      }));
+
+      return c.json({ data });
+    }
+
+    const T0 = latestEntry[0].created_at;
+
+    const getSnapshotAt = (daysAgo: number, alias: string) => {
+      return postgresDb
+        .select({
+          exchange_id: user_balances_snapshots.exchange_id,
+          total: sql<number>`sum(${user_balances_snapshots.balance})`.mapWith(Number),
+        })
+        .from(user_balances_snapshots)
+        .where(and(
+          eq(user_balances_snapshots.user_id, user_id),
+          sql`${user_balances_snapshots.created_at} BETWEEN (${T0}::timestamp - interval '${daysAgo} days' - interval '2 hours')
+              AND (${T0}::timestamp - interval '${daysAgo} days' + interval '2 hours')`
+        ))
+        .groupBy(user_balances_snapshots.exchange_id)
+        .as(alias);
+    };
+
+    const current = getSnapshotAt(0, 'curr');
+    const d1 = getSnapshotAt(1, 'd1');
+    const d7 = getSnapshotAt(7, 'd7');
+    const d30 = getSnapshotAt(30, 'd30');
+
+    const results = await postgresDb
+      .select({
+        id: exchanges.id,
+        exchange_title: exchanges.exchange_title,
+        exchange_user_id: exchanges.exchange_user_id,
+        market_type: exchanges.market_type,
+        autotraderCount: sql<number>`(SELECT count(*) FROM ${autotraders} WHERE ${autotraders.exchange_id} = ${exchanges.id})`.mapWith(Number),
+        valCurr: current.total,
+        val1D: d1.total,
+        val7D: d7.total,
+        val30D: d30.total,
+      })
+      .from(exchanges)
+      .leftJoin(current, eq(exchanges.id, current.exchange_id))
+      .leftJoin(d1, eq(exchanges.id, d1.exchange_id))
+      .leftJoin(d7, eq(exchanges.id, d7.exchange_id))
+      .leftJoin(d30, eq(exchanges.id, d30.exchange_id))
+      .where(eq(exchanges.user_id, user_id));
+
+    const assetsDistribution = await postgresDb
+      .select({
+        exchange_id: user_balances_snapshots.exchange_id,
+        currency: user_balances_snapshots.currency,
+        balance: user_balances_snapshots.balance,
+      })
+      .from(user_balances_snapshots)
+      .where(and(
+        eq(user_balances_snapshots.user_id, user_id),
+        sql`${user_balances_snapshots.created_at} > now() - interval '2 hours'`
+      ));
+
+    const data = results.map((row) => {
+      const curr = row.valCurr || 0;
+      const calcChange = (prev: number | null) =>
+        prev && prev > 0 ? parseFloat((((curr - prev) / prev) * 100).toFixed(2)) : 0;
+
+      const assets = assetsDistribution
+        .filter((a) => a.exchange_id === row.id)
+        .map((a) => ({
+          color: a.currency === 'USDT' ? '#4ade80' : a.currency === 'BTC' ? '#f59e0b' : '#60a5fa',
+          pct: curr > 0 ? (Number(a.balance) / curr) * 100 : 0,
+        }));
+
+      return {
+        id: row.id,
+        exchange_title: row.exchange_title,
+        exchange_user_id: row.exchange_user_id,
+        market_type: row.market_type,
+        value: curr,
+        change1D: calcChange(row.val1D),
+        change7D: calcChange(row.val7D),
+        change30D: calcChange(row.val30D),
+        autotraderCount: row.autotraderCount,
+        assets: assets.length > 0 ? assets : [{ color: '#4ade80', pct: 100 }],
+      };
+    });
+
+    return c.json({ data });
+  }
+);
+
 userRouter.get(
   '/dashboard',
    jwt({ secret: process.env.JWT_SECRET! }),
@@ -159,203 +284,8 @@ userRouter.get(
   async (c) => {
     const { period } = c.req.valid('query');
     const payload = c.get('jwtPayload');
-    const user_id = payload.sub;
+    const user_id = Number(payload.sub);
 
-    const now = new Date();
-    const periodStart = period === 'all' ? null : new Date(
-      now.getTime() - ({ '7d': 7, '30d': 30, '90d': 90 }[period] * 24 * 60 * 60 * 1000)
-    ).toISOString();
-
-    const [
-      accountsWithBalance,
-      equityChart,
-      tradeHistory,
-      overviewStats,
-      autotraderStats,
-    ] = await Promise.all([
-
-      // 1. Accounts summary — latest balance snapshot per exchange
-      postgresDb.execute(sql`
-        SELECT
-          e.id          AS exchange_id,
-          e.exchange_title,
-          e.market_type,
-          e.is_active,
-          s.balance,
-          s.currency,
-          s.created_at  AS snapshot_at
-        FROM ${exchanges} e
-        LEFT JOIN LATERAL (
-          SELECT balance, currency, created_at
-          FROM ${user_balances_snapshots}
-          WHERE exchange_id = e.id AND user_id = ${user_id}
-          ORDER BY created_at DESC
-          LIMIT 1
-        ) s ON true
-        WHERE e.user_id = ${user_id}
-        ORDER BY s.balance DESC NULLS LAST
-      `),
-
-      // 2. Equity chart — aggregated daily balance totals within period
-      postgresDb.execute(sql`
-        SELECT
-          date_trunc('day', created_at) AS day,
-          SUM(balance)                  AS total_balance
-        FROM ${user_balances_snapshots}
-        WHERE user_id = ${user_id}
-          ${periodStart ? sql`AND created_at >= ${periodStart}` : sql``}
-        GROUP BY day
-        ORDER BY day ASC
-      `),
-
-      // 3. Trade history — last 5 closed or failed trades with exchange name
-      postgresDb
-        .select({
-          id: trades.id,
-          contract: trades.contract,
-          position_type: trades.position_type,
-          market_type: trades.market_type,
-          status: trades.status,
-          pnl: trades.pnl,
-          pnl_margin: trades.pnl_margin,
-          price: trades.price,
-          created_at: trades.created_at,
-          exchange_title: exchanges.exchange_title,
-        })
-        .from(trades)
-        .innerJoin(exchanges, eq(trades.exchange_id, exchanges.id))
-        .where(
-          and(
-            eq(trades.user_id, user_id),
-            eq(trades.is_tpsl, false),
-          )
-        )
-        .orderBy(desc(trades.created_at))
-        .limit(5),
-
-      // 4. Overview stats — accounts, autotrader counts, trade stats, PnL, win rate
-      postgresDb.execute(sql`
-        WITH trade_stats AS (
-          SELECT
-            COUNT(*)                                          AS total_trades,
-            SUM(CASE WHEN pnl IS NOT NULL THEN pnl::numeric ELSE 0 END) AS total_pnl,
-            SUM(CASE WHEN pnl::numeric > 0 THEN 1 ELSE 0 END)           AS winning_trades,
-            COUNT(CASE WHEN pnl IS NOT NULL THEN 1 END)                  AS closed_trades
-          FROM ${trades}
-          WHERE user_id = ${user_id} AND is_tpsl = false
-        ),
-        account_stats AS (
-          SELECT
-            COUNT(*)                                                     AS accounts_connected,
-            SUM(CASE WHEN is_active THEN 1 ELSE 0 END)                  AS active_accounts
-          FROM ${exchanges}
-          WHERE user_id = ${user_id}
-        ),
-        autotrader_counts AS (
-          SELECT
-            COUNT(*)                                                     AS total_autotraders,
-            SUM(CASE WHEN status = 'active' THEN 1 ELSE 0 END)         AS active_autotraders,
-            SUM(CASE WHEN status = 'stopped' THEN 1 ELSE 0 END)        AS stopped_autotraders,
-            SUM(CASE WHEN status = 'paused' THEN 1 ELSE 0 END)         AS paused_autotraders
-          FROM ${autotraders}
-          WHERE user_id = ${user_id}
-        ),
-        initial_investment AS (
-          SELECT COALESCE(SUM(initial_investment::numeric), 0) AS total_initial
-          FROM ${autotraders}
-          WHERE user_id = ${user_id}
-        )
-        SELECT
-          a.accounts_connected,
-          a.active_accounts,
-          at.total_autotraders,
-          at.active_autotraders,
-          at.stopped_autotraders,
-          at.paused_autotraders,
-          t.total_trades,
-          t.total_pnl,
-          t.winning_trades,
-          t.closed_trades,
-          i.total_initial,
-          CASE WHEN t.closed_trades > 0
-            THEN ROUND((t.winning_trades::numeric / t.closed_trades) * 100, 2)
-            ELSE 0
-          END AS win_rate,
-          CASE WHEN i.total_initial > 0
-            THEN ROUND((t.total_pnl / i.total_initial) * 100, 2)
-            ELSE 0
-          END AS roi
-        FROM account_stats a, autotrader_counts at, trade_stats t, initial_investment i
-      `),
-
-      // 5. Top 3 autotraders by win rate (min 1 closed trade)
-      postgresDb.execute(sql`
-        SELECT
-          at.id,
-          at.symbol,
-          at.market,
-          at.status,
-          at.current_balance,
-          at.initial_investment,
-          e.exchange_title,
-          COUNT(t.id)                                                    AS total_trades,
-          SUM(CASE WHEN t.pnl::numeric > 0 THEN 1 ELSE 0 END)          AS winning_trades,
-          CASE WHEN COUNT(t.id) > 0
-            THEN ROUND((SUM(CASE WHEN t.pnl::numeric > 0 THEN 1 ELSE 0 END)::numeric / COUNT(t.id)) * 100, 2)
-            ELSE 0
-          END AS win_rate
-        FROM ${autotraders} at
-        INNER JOIN ${exchanges} e ON e.id = at.exchange_id
-        LEFT JOIN ${trades} t ON t.autotrader_id = at.id
-          AND t.is_tpsl = false
-          AND t.pnl IS NOT NULL
-        WHERE at.user_id = ${user_id}
-        GROUP BY at.id, at.symbol, at.market, at.status, at.current_balance, at.initial_investment, e.exchange_title
-        HAVING COUNT(t.id) > 0
-        ORDER BY win_rate DESC
-        LIMIT 3
-      `),
-    ]);
-
-    const overview = (overviewStats as any[])[0] ?? {};
-    const totalBalance = (accountsWithBalance as any[]).reduce(
-      (sum, a) => sum + Number(a.balance ?? 0), 0
-    );
-
-    return c.json({
-      equity_summary: {
-        total_balance: totalBalance,
-        chart: equityChart,
-      },
-      accounts_summary: accountsWithBalance,
-      trade_history: tradeHistory,
-      data_overview: {
-        accounts_connected: Number(overview.accounts_connected ?? 0),
-        active_accounts: Number(overview.active_accounts ?? 0),
-        autotraders: {
-          total: Number(overview.total_autotraders ?? 0),
-          active: Number(overview.active_autotraders ?? 0),
-          stopped: Number(overview.stopped_autotraders ?? 0),
-          paused: Number(overview.paused_autotraders ?? 0),
-        },
-        trades: Number(overview.total_trades ?? 0),
-        total_pnl: Number(overview.total_pnl ?? 0),
-        win_rate: Number(overview.win_rate ?? 0),
-        roi: Number(overview.roi ?? 0),
-      },
-      top_autotraders: autotraderStats,
-    });
-  }
-);
-
-
-
-userRouter.get('/accounts',
-    jwt({ secret: process.env.JWT_SECRET! }),
-  zValidator('query', accountsQuerySchema, validationErrorHandler),
-   async (c) => {
-    const payload = c.get('jwtPayload');
-    const user_id = payload.sub;
     log.debug({ user_id }, 'user Id');
 
   // 1. Find the literal last time a snapshot was recorded for this user
@@ -466,6 +396,59 @@ userRouter.get('/accounts',
     return c.json({ data });
   });
 
+// POST /trading-plans/:id/keys — create an active plan webhook key
+userRouter.post('/trading-plans/:id/keys',
+  jwt({ secret: process.env.JWT_SECRET! }),
+  async (c) => {
+    const payload = c.get('jwtPayload');
+    const user_id = Number(payload.sub);
+    const trading_plan_id = Number(c.req.param('id'));
+
+    if (!Number.isFinite(trading_plan_id) || trading_plan_id <= 0) {
+      return c.json({ error: 'Invalid trading plan id' }, 400);
+    }
+
+    const [plan] = await postgresDb
+      .select({ id: trading_plans.id, owner_user_id: trading_plans.owner_user_id })
+      .from(trading_plans)
+      .where(eq(trading_plans.id, trading_plan_id))
+      .limit(1);
+
+    if (!plan) {
+      return c.json({ error: 'Trading plan not found' }, 404);
+    }
+
+    if (plan.owner_user_id !== user_id) {
+      return c.json({ error: 'Forbidden' }, 403);
+    }
+
+    const keyRaw = nodeCrypto.randomUUID().replace(/-/g, '');
+    const secretRaw = nodeCrypto.randomUUID().replace(/-/g, '') + nodeCrypto.randomUUID().replace(/-/g, '');
+    const keyHash = nodeCrypto.createHash('sha256').update(keyRaw).digest('hex');
+    const secretHash = nodeCrypto.createHash('sha256').update(secretRaw).digest('hex');
+
+    const [created] = await postgresDb
+      .insert(trading_plan_keys)
+      .values({
+        trading_plan_id,
+        key_hash: keyHash,
+        secret_hash: secretHash,
+        is_active: true,
+      })
+      .returning({ id: trading_plan_keys.id, trading_plan_id: trading_plan_keys.trading_plan_id, rate_limit: trading_plan_keys.rate_limit, is_active: trading_plan_keys.is_active, created_at: trading_plan_keys.created_at });
+
+    return c.json({
+      data: {
+        ...created,
+        key_id: created.id,
+        key: keyRaw,
+        secret: secretRaw,
+      },
+      note: 'Secret is shown once. Store securely.',
+    }, 201);
+  }
+);
+
 // GET /autotraders — list all autotraders for the authenticated user
 userRouter.get('/autotraders',
   jwt({ secret: process.env.JWT_SECRET! }),
@@ -478,6 +461,7 @@ userRouter.get('/autotraders',
         id: autotraders.id,
         exchange_id: autotraders.exchange_id,
         trading_plan_id: autotraders.trading_plan_id,
+        trading_plan_pair_id: autotraders.trading_plan_pair_id,
         market: autotraders.market,
         pair: autotraders.pair,
         symbol: autotraders.symbol,
@@ -504,7 +488,7 @@ userRouter.get('/autotraders',
   }
 );
 
-// GET /trading-plans — list all trading plans owned by the authenticated user
+// GET /trading-plans — list authenticated user's plans + public plans
 userRouter.get('/trading-plans',
   jwt({ secret: process.env.JWT_SECRET! }),
   async (c) => {
@@ -604,6 +588,7 @@ userRouter.post('/autotraders',
       pairs.map(async (p: {
         symbol: string;
         pair: string;
+        trading_plan_pair_id?: number | null;
         initial_investment: string;
         leverage: number;
         leverage_type: string;
@@ -660,29 +645,49 @@ userRouter.post('/autotraders',
       return c.json({ error: 'Failed to process all pairs' }, 400);
     }
 
-    const inserted = await postgresDb
-      .insert(autotraders)
-      .values(
-        processedPairs.map((p) => ({
-          user_id,
-          exchange_id,
-          trading_plan_id,
-          market,
-          market_code: null,
-          pair: p.pair,
-          symbol: p.symbol,
-          initial_investment: p.initial_investment,
-          current_balance: p.initial_investment,
-          leverage: p.leverage,
-          leverage_type: p.leverage_type,
-          margin_mode: p.margin_mode,
-          position_mode: p.position_mode,
-          status: 'stopped',
-          webhook_token: crypto.randomUUID(),
-          contract_value_multiplier: p.contract_value_multiplier,
-        }))
-      )
-      .returning();
+    const inserted = await postgresDb.transaction(async (tx) => {
+      const existingFollower = trading_plan_id
+        ? await tx
+            .select({ id: autotraders.id })
+            .from(autotraders)
+            .where(and(eq(autotraders.user_id, user_id), eq(autotraders.trading_plan_id, trading_plan_id)))
+            .limit(1)
+        : [];
+
+      const createdAutotraders = await tx
+        .insert(autotraders)
+        .values(
+          processedPairs.map((p) => ({
+            user_id,
+            exchange_id,
+            trading_plan_id,
+            trading_plan_pair_id: p.trading_plan_pair_id ?? null,
+            market,
+            market_code: null,
+            pair: p.pair,
+            symbol: p.symbol,
+            initial_investment: p.initial_investment,
+            current_balance: p.initial_investment,
+            leverage: p.leverage,
+            leverage_type: p.leverage_type,
+            margin_mode: p.margin_mode,
+            position_mode: p.position_mode,
+            status: 'stopped',
+            webhook_token: nodeCrypto.randomUUID(),
+            contract_value_multiplier: p.contract_value_multiplier,
+          }))
+        )
+        .returning();
+
+      if (trading_plan_id && existingFollower.length === 0) {
+        await tx
+          .update(trading_plans)
+          .set({ total_followers: sql`COALESCE(${trading_plans.total_followers}, 0) + 1` })
+          .where(eq(trading_plans.id, trading_plan_id));
+      }
+
+      return createdAutotraders;
+    });
 
     return c.json({ data: inserted }, 201);
   }
@@ -881,6 +886,7 @@ userRouter.get('/autotraders/:id',
         id: autotraders.id,
         exchange_id: autotraders.exchange_id,
         trading_plan_id: autotraders.trading_plan_id,
+        trading_plan_pair_id: autotraders.trading_plan_pair_id,
         market: autotraders.market,
         pair: autotraders.pair,
         symbol: autotraders.symbol,

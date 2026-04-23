@@ -1,8 +1,16 @@
 import { Context } from 'hono';
 import { z } from 'zod';
+import crypto from 'node:crypto';
+import { and, eq } from 'drizzle-orm';
 import { postgresDb } from '../db/client';
-import { autotraders, exchanges, webhooks, webhook_responses } from '../db/schema';
-import { eq } from 'drizzle-orm';
+import redis from '../db/redis';
+import {
+  autotraders,
+  exchanges,
+  trading_plan_keys,
+  webhooks,
+  webhook_responses,
+} from '../db/schema';
 import { GateHandler } from './gate/gateHandler';
 import { OkxHandler } from './okx/okxHandler';
 import { HyperliquidHandler } from './hyperliquid/hyperliquidHandler';
@@ -42,16 +50,13 @@ const tpSlSchema = z.object({
 const signalSchema = z.object({
   token: z.string().min(1),
   action: z.enum(['BUY', 'SELL', 'CLOSE', 'CANCEL']),
-
-  // Optional overrides — if omitted, executor uses autotrader config defaults
   order_type: z.enum(['market', 'limit']).optional(),
   price: z.coerce.number().optional(),
-  market_price: z.coerce.number().positive().optional(), // current price from TradingView, used for contract sizing on market orders
+  market_price: z.coerce.number().positive().optional(),
   take_profit: tpSlSchema.optional(),
   stop_loss: tpSlSchema.optional(),
 }).refine(
   (data) => {
-    // price is required when order_type = limit on BUY/SELL
     if (data.order_type === 'limit' && (data.action === 'BUY' || data.action === 'SELL')) {
       return data.price !== undefined && data.price > 0;
     }
@@ -60,92 +65,143 @@ const signalSchema = z.object({
   { message: 'price is required and must be > 0 when order_type is limit', path: ['price'] },
 );
 
-export const SignalHandler = {
-  /**
-   * POST /webhook/signal
-   *
-   * Minimal public endpoint — no JWT. Authenticated via per-autotrader webhook_token.
-   * TradingView alert payload (all fields except token+action are optional overrides):
-   *   { "token": "...", "action": "BUY"|"SELL"|"CLOSE"|"CANCEL",
-   *     "order_type": "market"|"limit", "price": 65000,
-   *     "take_profit": { "enabled": true, "price": "68000", "price_type": "mark" },
-   *     "stop_loss":   { "enabled": true, "price": "62000", "price_type": "mark" } }
-   */
-  handleSignal: async function (c: Context) {
-    const start = Date.now();
-
-    // 1. Parse & validate body
-    let body: z.infer<typeof signalSchema>;
-    try {
-      body = signalSchema.parse(await c.req.json());
-    } catch (err) {
-      return c.json({ error: 'Invalid payload', detail: (err as Error).message }, 400);
+const planSignalSchema = z.object({
+  key_id: z.coerce.number().int().positive(),
+  secret: z.string().min(1),
+  event_id: z.string().min(1).max(128).optional(),
+  pair_symbol: z.string().min(1).optional(),
+  pair_id: z.coerce.number().int().positive().optional(),
+  action: z.enum(['BUY', 'SELL', 'CLOSE', 'CANCEL']),
+  order_type: z.enum(['market', 'limit']).optional(),
+  price: z.coerce.number().optional(),
+  market_price: z.coerce.number().positive().optional(),
+  take_profit: tpSlSchema.optional(),
+  stop_loss: tpSlSchema.optional(),
+}).refine(
+  (data) => {
+    if (data.order_type === 'limit' && (data.action === 'BUY' || data.action === 'SELL')) {
+      return data.price !== undefined && data.price > 0;
     }
+    return true;
+  },
+  { message: 'price is required and must be > 0 when order_type is limit', path: ['price'] },
+);
 
-    // 2. Resolve autotrader by webhook_token
-    const autotrader = await postgresDb.query.autotraders.findFirst({
-      where: eq(autotraders.webhook_token, body.token),
-    });
+function sha256(input: string): string {
+  return crypto.createHash('sha256').update(input).digest('hex');
+}
 
-    if (!autotrader) {
-      // Return 404 — don't hint whether token exists or not
-      return c.json({ error: 'Invalid token' }, 404);
+function safeEqualHex(expectedHex: string, actualHex: string): boolean {
+  const a = Buffer.from(expectedHex, 'hex');
+  const b = Buffer.from(actualHex, 'hex');
+  if (a.length !== b.length) return false;
+  return crypto.timingSafeEqual(a, b);
+}
+
+async function checkRateLimit(keyId: number, maxPerMinute: number): Promise<boolean> {
+  const rlKey = `plan-key:${keyId}:minute:${Math.floor(Date.now() / 60000)}`;
+  const count = await redis.incr(rlKey);
+  if (count === 1) {
+    await redis.expire(rlKey, 70);
+  }
+  return count <= maxPerMinute;
+}
+
+async function runBounded<T>(items: T[], worker: (item: T) => Promise<void>, concurrency: number): Promise<void> {
+  if (items.length === 0) return;
+  let index = 0;
+  const runners = Array.from({ length: Math.min(concurrency, items.length) }, async () => {
+    while (true) {
+      const i = index;
+      index += 1;
+      if (i >= items.length) return;
+      await worker(items[i]);
     }
+  });
+  await Promise.all(runners);
+}
 
-    // 3. Guard: only process signals for active autotraders
-    if (autotrader.status !== 'active') {
-      return c.json({
-        error: 'Autotrader is not active',
-        status: autotrader.status,
-      }, 422);
-    }
+function getOverridesFromBody(body: z.infer<typeof signalSchema> | z.infer<typeof planSignalSchema>) {
+  return {
+    order_type: body.order_type,
+    price: body.price,
+    market_price: body.market_price,
+    take_profit: body.take_profit,
+    stop_loss: body.stop_loss,
+  };
+}
 
-    // 4. Load exchange row
-    const exchange = await postgresDb.query.exchanges.findFirst({
-      where: eq(exchanges.id, autotrader.exchange_id),
-    });
+function safeJson(v: unknown): Record<string, unknown> {
+  if (v == null) return {};
+  try { return JSON.parse(JSON.stringify(v)); } catch { return {}; }
+}
 
-    if (!exchange) {
-      return c.json({ error: 'Exchange configuration not found' }, 500);
-    }
+async function executeSignalForAutotrader(params: {
+  autotrader: typeof autotraders.$inferSelect;
+  action: SignalAction;
+  payload: Record<string, unknown>;
+  webhookType: 'personal' | 'subscription';
+  tradingPlanId?: number;
+  batchId?: string;
+  dedupeKey?: string;
+  start: number;
+  overrides: ReturnType<typeof getOverridesFromBody>;
+}) {
+  const { autotrader, action, payload, webhookType, tradingPlanId, batchId, dedupeKey, start, overrides } = params;
 
-    // 5. Record the webhook attempt now that we have user_id + exchange_id
-    const [webhookRow] = await postgresDb.insert(webhooks).values({
+  const exchange = await postgresDb.query.exchanges.findFirst({ where: eq(exchanges.id, autotrader.exchange_id) });
+  if (!exchange) {
+    log.error({ autotrader_id: autotrader.id }, 'Exchange configuration not found');
+    return;
+  }
+
+  let webhookRowId: number | null = null;
+
+  try {
+    const insertedWebhook = await postgresDb.insert(webhooks).values({
       user_id: autotrader.user_id,
       exchange_id: autotrader.exchange_id,
       autotrader_id: autotrader.id,
-      action: body.action,
-      payload: body as unknown as Record<string, unknown>,
+      trading_plan_id: tradingPlanId ?? autotrader.trading_plan_id ?? null,
+      batch_id: batchId ?? null,
+      dedupe_key: dedupeKey ?? null,
+      action,
+      payload,
       status: 'pending',
-      type: 'personal',
-    }).returning({ id: webhooks.id });
+      type: webhookType,
+    }).onConflictDoNothing({ target: webhooks.dedupe_key }).returning({ id: webhooks.id });
+
+    if (insertedWebhook.length === 0) {
+      log.info({ dedupeKey, autotrader_id: autotrader.id }, 'Duplicate event skipped by dedupe key');
+      return;
+    }
+
+    webhookRowId = insertedWebhook[0].id;
 
     const markWebhook = async (status: string, error_message?: string) => {
+      if (!webhookRowId) return;
       await postgresDb.update(webhooks)
         .set({ status, error_message: error_message ?? null, processed_at: new Date() })
-        .where(eq(webhooks.id, webhookRow.id));
+        .where(eq(webhooks.id, webhookRowId));
     };
 
-    // 6. Decrypt credentials via KMS (dispatched per exchange type)
     let credentials: Awaited<ReturnType<typeof resolveCredentials>>;
     try {
       credentials = await resolveCredentials(exchange.exchange_title, autotrader.exchange_id);
     } catch (err) {
-      log.error({ err }, 'KMS decrypt failed');
+      log.error({ err, autotrader_id: autotrader.id }, 'KMS decrypt failed');
       await markWebhook('failed', 'Failed to load exchange credentials');
-      return c.json({ error: 'Failed to load exchange credentials' }, 500);
+      return;
     }
 
-    // 7. Get the right executor for this exchange
     let executor;
     try {
       executor = getExecutor(exchange.exchange_title);
     } catch (err) {
       await markWebhook('failed', (err as Error).message);
-      return c.json({ error: (err as Error).message }, 422);
+      return;
     }
 
-    // 8. Respond immediately so TradingView doesn't time out, execute in background
     const execCtx = {
       autotrader,
       exchange,
@@ -153,30 +209,19 @@ export const SignalHandler = {
       api_secret: credentials.api_secret,
       api_passphrase: (credentials as any).api_passphrase,
       exchange_user_id: credentials.exchange_user_id,
-      action: body.action as SignalAction,
-      overrides: {
-        order_type: body.order_type,
-        price: body.price,
-        market_price: body.market_price,
-        take_profit: body.take_profit,
-        stop_loss: body.stop_loss,
-      },
-    };
-
-    const safeJson = (v: unknown): Record<string, unknown> => {
-      if (v == null) return {};
-      try { return JSON.parse(JSON.stringify(v)); } catch { return {}; }
+      action,
+      overrides,
     };
 
     executor.execute(execCtx).then(async (result) => {
+      if (!webhookRowId) return;
       if (!result.success) {
         exchangeErrorsTotal.inc({ exchange: exchange.exchange_title, component: 'executor' });
-        tradesOpenedTotal.inc({ exchange: exchange.exchange_title, action: body.action, status: 'failed' });
-        log.error({ action: body.action, symbol: autotrader.symbol, error: result.error }, 'Executor failed');
+        tradesOpenedTotal.inc({ exchange: exchange.exchange_title, action, status: 'failed' });
         await Promise.all([
           markWebhook('failed', result.error),
           postgresDb.insert(webhook_responses).values({
-            webhook_id: webhookRow.id,
+            webhook_id: webhookRowId,
             user_id: autotrader.user_id,
             exchange_id: autotrader.exchange_id,
             response_status: 422,
@@ -184,30 +229,30 @@ export const SignalHandler = {
             error_message: result.error ?? null,
           }),
         ]);
-      } else {
-        tradesOpenedTotal.inc({ exchange: exchange.exchange_title, action: body.action, status: 'success' });
-        signalLatency.observe({ exchange: exchange.exchange_title, action: body.action }, Date.now() - start);
-        log.info({ action: body.action, symbol: autotrader.symbol, exchange_order_id: result.exchange_order_id }, 'Executor succeeded');
-        await Promise.all([
-          markWebhook('completed'),
-          postgresDb.insert(webhook_responses).values({
-            webhook_id: webhookRow.id,
-            user_id: autotrader.user_id,
-            exchange_id: autotrader.exchange_id,
-            response_status: 200,
-            response_body: safeJson(result.raw),
-          }),
-        ]);
+        return;
       }
+
+      tradesOpenedTotal.inc({ exchange: exchange.exchange_title, action, status: 'success' });
+      signalLatency.observe({ exchange: exchange.exchange_title, action }, Date.now() - start);
+      await Promise.all([
+        markWebhook('completed'),
+        postgresDb.insert(webhook_responses).values({
+          webhook_id: webhookRowId,
+          user_id: autotrader.user_id,
+          exchange_id: autotrader.exchange_id,
+          response_status: 200,
+          response_body: safeJson(result.raw),
+        }),
+      ]);
     }).catch(async (err) => {
-      exchangeErrorsTotal.inc({ exchange: exchange.exchange_title, component: 'executor' });
-      tradesOpenedTotal.inc({ exchange: exchange.exchange_title, action: body.action, status: 'failed' });
-      log.error({ err, action: body.action, symbol: autotrader.symbol }, 'Executor threw');
+      if (!webhookRowId) return;
       const errMsg = (err as Error).message ?? String(err);
+      exchangeErrorsTotal.inc({ exchange: exchange.exchange_title, component: 'executor' });
+      tradesOpenedTotal.inc({ exchange: exchange.exchange_title, action, status: 'failed' });
       await Promise.all([
         markWebhook('failed', errMsg),
         postgresDb.insert(webhook_responses).values({
-          webhook_id: webhookRow.id,
+          webhook_id: webhookRowId,
           user_id: autotrader.user_id,
           exchange_id: autotrader.exchange_id,
           response_status: 500,
@@ -216,17 +261,134 @@ export const SignalHandler = {
         }),
       ]);
     });
+  } catch (err) {
+    log.error({ err, autotrader_id: autotrader.id }, 'Failed to enqueue autotrader execution');
+  }
+}
+
+export const SignalHandler = {
+  handleSignal: async function (c: Context) {
+    const start = Date.now();
+
+    let body: z.infer<typeof signalSchema>;
+    try {
+      body = signalSchema.parse(await c.req.json());
+    } catch (err) {
+      return c.json({ error: 'Invalid payload', detail: (err as Error).message }, 400);
+    }
+
+    const autotrader = await postgresDb.query.autotraders.findFirst({
+      where: eq(autotraders.webhook_token, body.token),
+    });
+
+    if (!autotrader) {
+      return c.json({ error: 'Invalid token' }, 404);
+    }
+
+    if (autotrader.status !== 'active') {
+      return c.json({ error: 'Autotrader is not active', status: autotrader.status }, 422);
+    }
+
+    await executeSignalForAutotrader({
+      autotrader,
+      action: body.action,
+      payload: body as unknown as Record<string, unknown>,
+      webhookType: 'personal',
+      start,
+      overrides: getOverridesFromBody(body),
+    });
 
     const latency_ms = Date.now() - start;
-    log.info({ action: body.action, symbol: autotrader.symbol, latency_ms }, 'Signal processed');
-    
     return c.json({
       ok: true,
       action: body.action,
-      exchange: exchange.exchange_title,
       autotrader_id: autotrader.id,
       symbol: autotrader.symbol,
       latency_ms,
+    });
+  },
+
+  handlePublicSignal: async function (c: Context) {
+    const start = Date.now();
+
+    let body: z.infer<typeof planSignalSchema>;
+    try {
+      body = planSignalSchema.parse(await c.req.json());
+    } catch (err) {
+      return c.json({ error: 'Invalid payload', detail: (err as Error).message }, 400);
+    }
+
+    const [keyRow] = await postgresDb
+      .select()
+      .from(trading_plan_keys)
+      .where(and(eq(trading_plan_keys.id, body.key_id), eq(trading_plan_keys.is_active, true)))
+      .limit(1);
+
+    if (!keyRow) {
+      return c.json({ error: 'Invalid key' }, 401);
+    }
+
+    const secretHash = sha256(body.secret);
+    if (!safeEqualHex(keyRow.secret_hash, secretHash)) {
+      return c.json({ error: 'Invalid key' }, 401);
+    }
+
+    const allowed = await checkRateLimit(keyRow.id, keyRow.rate_limit);
+    if (!allowed) {
+      return c.json({ error: 'Rate limit exceeded for this key' }, 429);
+    }
+
+    let followers = await postgresDb
+      .select()
+      .from(autotraders)
+      .where(and(
+        eq(autotraders.trading_plan_id, keyRow.trading_plan_id),
+        eq(autotraders.status, 'active'),
+      ));
+
+    if (body.pair_id) {
+      followers = followers.filter((f) => f.trading_plan_pair_id === body.pair_id);
+    }
+
+    if (body.pair_symbol) {
+      const s = body.pair_symbol.toUpperCase();
+      followers = followers.filter((f) => f.symbol.toUpperCase() === s || (f.pair ?? '').toUpperCase() === s);
+    }
+
+    const batchId = crypto.randomUUID();
+
+    const dedupeKeyBase = body.event_id
+      ? `plan:${keyRow.trading_plan_id}:event:${body.event_id}`
+      : undefined;
+
+    runBounded(
+      followers,
+      async (follower) => {
+        await executeSignalForAutotrader({
+          autotrader: follower,
+          action: body.action,
+          payload: body as unknown as Record<string, unknown>,
+          webhookType: 'subscription',
+          tradingPlanId: keyRow.trading_plan_id,
+          batchId,
+          dedupeKey: dedupeKeyBase ? `${dedupeKeyBase}:autotrader:${follower.id}` : undefined,
+          start,
+          overrides: getOverridesFromBody(body),
+        });
+      },
+      10,
+    ).catch((err) => {
+      log.error({ err, batchId }, 'Plan signal fanout failed');
+    });
+
+    return c.json({
+      ok: true,
+      action: body.action,
+      trading_plan_id: keyRow.trading_plan_id,
+      followers_count: followers.length,
+      batch_id: batchId,
+      dedupe_event_id: body.event_id ?? null,
+      latency_ms: Date.now() - start,
     });
   },
 };

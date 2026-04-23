@@ -28,19 +28,20 @@ export const TradingPlanHandler = {
     try {
       const body = await c.req.json();
       const validatedData = createTradingPlanSchema.parse(body);
+      const { pairs, ...tradingPlanData } = validatedData;
 
       // Check if owner user exists
       const userExists = await postgresDb
         .select({ id: users.id })
         .from(users)
-        .where(eq(users.id, validatedData.owner_user_id))
+        .where(eq(users.id, tradingPlanData.owner_user_id))
         .limit(1);
 
       if (userExists.length === 0) {
         return c.json(
           {
             message: "User not found",
-            error: `User with ID ${validatedData.owner_user_id} does not exist`,
+            error: `User with ID ${tradingPlanData.owner_user_id} does not exist`,
           },
           404
         );
@@ -49,13 +50,35 @@ export const TradingPlanHandler = {
       // Create the trading plan
       const [newTradingPlan] = await postgresDb
         .insert(trading_plans)
-        .values(validatedData)
+        .values(tradingPlanData)
         .returning();
+
+      if (pairs && pairs.length > 0) {
+        await postgresDb.insert(trading_plan_pairs).values(
+          pairs.map((pair) => ({
+            trading_plan_id: newTradingPlan.id,
+            base_asset: pair.base_asset,
+            quote_asset: pair.quote_asset,
+            symbol: pair.symbol,
+          }))
+        );
+      }
+
+      const createdPairs = pairs && pairs.length > 0
+        ? await postgresDb
+          .select()
+          .from(trading_plan_pairs)
+          .where(eq(trading_plan_pairs.trading_plan_id, newTradingPlan.id))
+          .orderBy(asc(trading_plan_pairs.id))
+        : [];
 
       return c.json(
         {
           message: "Trading plan created successfully",
-          data: newTradingPlan,
+          data: {
+            ...newTradingPlan,
+            pairs: createdPairs,
+          },
         },
         201
       );
@@ -163,13 +186,27 @@ export const TradingPlanHandler = {
         : asc(trading_plans[validatedQuery.sort_by as keyof typeof trading_plans.$inferSelect]);
 
       // Execute query
-      const results = await postgresDb
+      let results = await postgresDb
         .select()
         .from(trading_plans)
         .where(conditions.length > 0 ? and(...conditions) : undefined)
         .orderBy(orderBy)
         .limit(validatedQuery.limit)
         .offset(validatedQuery.offset);
+
+      const planIds = results.map((p) => p.id);
+
+      let pairs: typeof trading_plan_pairs.$inferSelect[] = [];
+      if (planIds.length > 0) {
+        pairs = await postgresDb
+          .select()
+          .from(trading_plan_pairs)
+          .where(inArray(trading_plan_pairs.trading_plan_id, planIds));
+          results = results.map((plan) => ({
+            ...plan,
+            pairs: pairs.filter((p) => p.trading_plan_id === plan.id),
+          }))
+      }
 
       // Get total count for pagination
       const totalResult = await postgresDb
@@ -178,7 +215,7 @@ export const TradingPlanHandler = {
         .where(conditions.length > 0 ? and(...conditions) : undefined);
 
       const total = totalResult[0]?.count || 0;
-
+      
       return c.json({
         message: "Trading plans retrieved successfully",
         data: results,
@@ -259,7 +296,7 @@ export const TradingPlanHandler = {
           return c.json(
             {
               message: "User not found",
-              error: `User with ID ${validatedData.owner_user_id} does not exist`,
+              error: `User with ID ${trading_plans.owner_user_id} does not exist`,
             },
             404
           );

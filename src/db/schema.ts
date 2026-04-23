@@ -66,6 +66,7 @@ export const autotraders = pgTable('autotraders', {
   user_id: integer('user_id').notNull().references(() => users.id, { onDelete: 'cascade' }),
   exchange_id: integer('exchange_id').notNull().references(() => exchanges.id, { onDelete: 'cascade' }),
   trading_plan_id: integer('trading_plan_id').references(() => trading_plans.id, { onDelete: 'cascade' }),
+  trading_plan_pair_id: integer('trading_plan_pair_id').references(() => trading_plan_pairs.id, { onDelete: 'set null' }),
   market: text('market').notNull(),
   market_code: text('market_code'),
   pair: text('pair'), // BTC-USDT / DOGE_USDT_SWAP => this is following exchange's rules
@@ -159,12 +160,14 @@ export const trading_plan_pairs = pgTable('trading_plan_pairs', {
 export const trading_plan_keys = pgTable('trading_plan_keys', {
   id: serial('id').primaryKey(),
   trading_plan_id: integer('trading_plan_id').notNull().references(() => trading_plans.id, { onDelete: 'cascade' }),
-  hashed_secret: text('hashed_secret').notNull(),
+  key_hash: text('key_hash').notNull(),
+  secret_hash: text('secret_hash').notNull(),
   is_active: boolean('is_active').notNull().default(false),
   rate_limit: integer('rate_limit').notNull().default(100),
   created_at: timestamp('created_at', { withTimezone: true }).defaultNow(),
 }, (table) => {
   return {
+    uq_key_hash: unique().on(table.key_hash),
     idx_trading_plan_id: index().on(table.trading_plan_id),
     idx_is_active: index().on(table.is_active),
   };
@@ -199,6 +202,9 @@ export const webhooks = pgTable('webhooks', {
   user_id: integer('user_id').notNull().references(() => users.id, { onDelete: 'cascade' }),
   exchange_id: integer('exchange_id').notNull().references(() => exchanges.id, { onDelete: 'cascade' }),
   autotrader_id: integer('autotrader_id').references(() => autotraders.id, { onDelete: 'set null' }),
+  trading_plan_id: integer('trading_plan_id').references(() => trading_plans.id, { onDelete: 'set null' }),
+  batch_id: text('batch_id'),
+  dedupe_key: text('dedupe_key'),
   action: text('action').notNull(), // 'place_order', 'close_position', 'cancel_order', etc.
   payload: jsonb('payload').notNull(), // Original webhook payload
   status: text('status').default('pending'), // 'pending', 'open', 'finished', 'completed', 'failed'
@@ -206,6 +212,12 @@ export const webhooks = pgTable('webhooks', {
   type:text('type').default('subscription'), // 'subscription', 'personal'
   processed_at: timestamp('processed_at', { withTimezone: true }),
   created_at: timestamp('created_at', { withTimezone: true }).defaultNow(),
+}, (table) => {
+  return {
+    uq_dedupe_key: unique().on(table.dedupe_key),
+    idx_batch_id: index().on(table.batch_id),
+    idx_trading_plan_id: index().on(table.trading_plan_id),
+  };
 });
 
 // Trades table - stores trade information from exchanges

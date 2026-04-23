@@ -32,14 +32,21 @@ const decimalStringSchema = (fieldName: string) =>
 const tradingPlanBaseSchema = z.object({
   owner_user_id: z.number().int().positive(),
   name: z.string().min(1).max(255),
-  description: z.string().min(1),
+  description: z.string().optional(),
   total_followers: z.number().int().nonnegative().default(0),
   is_active: z.boolean().default(false),
+  visibility: z.enum(["PRIVATE", "UNLISTED", "PUBLIC"]).default("PRIVATE"),
+});
+
+const createTradingPlanPairItemSchema = z.object({
+  base_asset: z.string().min(1).max(50),
+  quote_asset: z.string().min(1).max(50),
+  symbol: z.string().min(1).max(100),
 });
 
 // Schema for creating a new trading plan
 export const createTradingPlanSchema = tradingPlanBaseSchema.extend({
-  // No id, created_at for creation
+  pairs: z.array(createTradingPlanPairItemSchema).max(100).optional(),
 });
 
 // Schema for updating an existing trading plan
@@ -62,18 +69,18 @@ export const updateTradingPlanSchema = z.object({
 
 // Schema for querying/filtering trading plans
 export const queryTradingPlanSchema = z.object({
-  id: z.number().int().positive().optional(),
-  owner_user_id: z.number().int().positive().optional(),
+  id: z.coerce.number().int().positive().optional(),
+  owner_user_id: z.coerce.number().int().positive().optional(),
   name: z.string().optional(),
   strategy: z.string().optional(),
   visibility: z.enum(["PRIVATE", "UNLISTED", "PUBLIC"]).optional(),
-  is_active: z.boolean().optional(),
+  is_active: z.coerce.boolean().optional(),
   min_pnl_30d: decimalStringSchema("Minimum PNL 30d").optional(),
   max_pnl_30d: decimalStringSchema("Maximum PNL 30d").optional(),
   min_sharpe: decimalStringSchema("Minimum Sharpe ratio").optional(),
   max_sharpe: decimalStringSchema("Maximum Sharpe ratio").optional(),
-  limit: z.number().int().positive().max(100).default(20),
-  offset: z.number().int().nonnegative().default(0),
+  limit: z.coerce.number().int().positive().max(100).default(20),
+  offset: z.coerce.number().int().nonnegative().default(0),
   sort_by: z.enum([
     "id", "owner_user_id", "name", "visibility", "pnl_30d",
     "sharpe", "total_followers", "created_at", "is_active"

@@ -50,7 +50,8 @@ export const HyperliquidHandler = {
   registerUser: async function (c: Context) {
     try {
       const body = await c.req.json();
-      let { master_wallet_address, private_key, user_id } = body;
+      // api_key is master wallet address, and api_secret is agent wallet private key
+      let { api_key: master_wallet_address, api_secret: private_key, user_id } = body;
 
       // Hyperliquid standard: always lowercase addresses
       master_wallet_address = master_wallet_address.toLowerCase();

@@ -4,6 +4,7 @@ import { validationErrorHandler } from "../middleware/validationErrorHandler";
 // Using your existing futures schema for consistency
 import { gatePlaceFuturesOrdersSchema } from "../schemas/gateSchemas";
 import { HyperliquidHandler } from "../handlers/hyperliquid/hyperliquidHandler";
+import { hyperliquidRegisterUserSchema } from "../schemas/hyperliquidSchemas";
 
 const hyperliquidRouter = new Hono();
 
@@ -15,6 +16,7 @@ hyperliquidRouter.post(
   "/register-user",
   // You might want to create a specific hyperliquidRegisterSchema,
   // but for now, we'll keep it flexible or use validationErrorHandler
+    zValidator("json", hyperliquidRegisterUserSchema, validationErrorHandler),
   HyperliquidHandler.registerUser
 );
 
