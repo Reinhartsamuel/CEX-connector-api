@@ -403,4 +403,39 @@ export const OkxServices = {
     const responseText = await response.text();
     return JSONbig.parse(responseText);
   },
+
+  getBalances: async function () {
+    const requestPath = "/api/v5/account/balance";
+    const headers = signRequestOkx(
+      {
+        key: this.config.credentials.key,
+        secret: this.config.credentials.secret,
+        passphrase: this.config.credentials.passphrase,
+      },
+      {
+        method: "GET",
+        requestPath,
+        body: "",
+      },
+    );
+
+    const response = await fetch(this.config.baseUrl + requestPath, {
+      method: "GET",
+      headers: {
+        "Content-Type": "application/json",
+        ...headers,
+      },
+    });
+
+    if (!response.ok) {
+      const errorText = await response.text();
+      return {
+        status: "error",
+        message: errorText,
+        statusCode: response.status,
+      };
+    }
+    const responseText = await response.text();
+    return JSONbig.parse(responseText);
+  },
 };

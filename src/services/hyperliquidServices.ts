@@ -147,6 +147,14 @@ export const HyperliquidServices = {
   },
 
   /**
+   * Get balances (clearinghouse state) for a user address.
+   * Delegates to getClearinghouseState — no signing needed (public /info endpoint).
+   */
+  getBalances: async function (userAddress: string) {
+    return this.getClearinghouseState(userAddress);
+  },
+
+  /**
    * Get order status by OID for a user address.
    */
   getOrderStatus: async function (userAddress: string, oid: number) {

@@ -158,6 +158,22 @@ export const TokocryptoServices = {
     }
   },
 
+  // Get balances — honors whatever market_type was set at initialize time
+  getBalances: async function() {
+    if (!this.exchange) throw new Error("Exchange not initialized");
+
+    try {
+      return await this.exchange.fetchBalance();
+    } catch (error: any) {
+      log.error({ err: error }, 'Error fetching balances:');
+      return {
+        status: "error",
+        message: error.message,
+        statusCode: error.statusCode || 500,
+      };
+    }
+  },
+
   // Whitelist request for testing/playground
   whitelistedRequest: async function(options: { method: string; endpoint: string; params?: any }) {
     if (!this.exchange) throw new Error("Exchange not initialized");

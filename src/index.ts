@@ -15,6 +15,7 @@ import bitgetRouter from './routes/bitgetRoutes'
 import mexcRouter from './routes/mexcRoutes'
 import bitmartRouter from './routes/bitmartRoutes'
 import metricsRouter from './routes/metricsRoute'
+import balancesRouter from './routes/balancesRoute'
 import { pinoLoggerMiddleware } from './middleware/pinoLogger'
 import { logger, flushLogger } from './utils/logger'
 
@@ -63,6 +64,7 @@ app.route('/user', userRouter)
 app.route('/autotraders', autotraderRouter)
 app.route('/trading-plans', tradingPlanRouter)
 app.route('/metrics', metricsRouter)
+app.route('/balances', balancesRouter)
 
 
 // Health check endpoint

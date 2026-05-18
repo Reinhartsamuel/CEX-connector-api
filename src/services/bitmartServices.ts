@@ -102,6 +102,22 @@ export const BitmartServices = {
     }
   },
 
+  // Get balances — futures (swap) wallet
+  getBalances: async function() {
+    if (!this.exchange) throw new Error("Exchange not initialized");
+
+    try {
+      return await this.exchange.fetchBalance({ type: 'swap' });
+    } catch (error: any) {
+      log.error({ err: error }, 'Error fetching balances:');
+      return {
+        status: "error",
+        message: error.message,
+        statusCode: error.statusCode || 500,
+      };
+    }
+  },
+
   // Whitelisted request for testing/playground
   whitelistedRequest: async function(options: { method: string; endpoint: string; params?: any }) {
     if (!this.exchange) throw new Error("Exchange not initialized");

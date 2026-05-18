@@ -161,8 +161,8 @@ export const queryTradingPlanPairSchema = z.object({
   base_asset: z.string().optional(),
   quote_asset: z.string().optional(),
   symbol: z.string().optional(),
-  limit: z.number().int().positive().max(100).default(20),
-  offset: z.number().int().nonnegative().default(0),
+  limit: z.coerce.number().int().positive().max(100).default(20),
+  offset: z.coerce.number().int().nonnegative().default(0),
   sort_by: z.enum(["id", "trading_plan_id", "symbol", "base_asset", "quote_asset"]).default("id"),
   sort_order: z.enum(["asc", "desc"]).default("asc"),
 });

@@ -198,7 +198,7 @@ export const GateServices = {
         "Content-Type": "application/json",
         ...headers,
       },
-      verbose: true,
+      // verbose: true,
     });
 
     if (!response.ok) {
@@ -532,6 +532,59 @@ export const GateServices = {
 
     const responseText = await response.text();
     return JSONbig.parse(responseText);
+  },
+  getBalances: async function () {
+    if (!this.config.credentials) {
+      throw new Error("No credentials found. Call initialize first!");
+    }
+
+    const futuresUrlPath = `/api/v4/futures/usdt/accounts`;
+    const spotUrlPath = `/api/v4/spot/accounts`;
+
+    const fetchFutures = async () => {
+      const headers = signRequestRestGate(this.config.credentials, {
+        method: "GET",
+        urlPath: futuresUrlPath,
+        queryString: "",
+      });
+      const response = await fetch(this.config.baseUrl + futuresUrlPath, {
+        method: "GET",
+        headers: {
+          "Content-Type": "application/json",
+          ...headers,
+        },
+      });
+      if (!response.ok) {
+        const errorText = await response.text();
+        return { status: "error", message: errorText, statusCode: response.status };
+      }
+      const responseText = await response.text();
+      return JSONbig.parse(responseText);
+    };
+
+    const fetchSpot = async () => {
+      const headers = signRequestRestGate(this.config.credentials, {
+        method: "GET",
+        urlPath: spotUrlPath,
+        queryString: "",
+      });
+      const response = await fetch(this.config.baseUrl + spotUrlPath, {
+        method: "GET",
+        headers: {
+          "Content-Type": "application/json",
+          ...headers,
+        },
+      });
+      if (!response.ok) {
+        const errorText = await response.text();
+        return { status: "error", message: errorText, statusCode: response.status };
+      }
+      const responseText = await response.text();
+      return JSONbig.parse(responseText);
+    };
+
+    const [futures, spot] = await Promise.all([fetchFutures(), fetchSpot()]);
+    return { futures, spot };
   },
   whitelistedRequest: async function ({
     method,
